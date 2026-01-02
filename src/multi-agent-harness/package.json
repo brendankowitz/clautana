@@ -1,0 +1,355 @@
+{
+  "name": "clautana",
+  "displayName": "Clautana",
+  "description": "AI-powered multi-agent orchestration for VS Code - Claude + Cortana working collaboratively on your codebase",
+  "version": "0.1.0",
+  "publisher": "ignixa",
+  "engines": {
+    "vscode": "^1.84.0"
+  },
+  "categories": ["Other", "Machine Learning"],
+  "keywords": ["claude", "ai", "agent", "multi-agent", "mcp", "clautana", "orchestration"],
+  "icon": "resources/agent-icon.svg",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "clautana.openPanel",
+        "title": "Open Clautana Panel",
+        "category": "Clautana",
+        "icon": "$(robot)"
+      },
+      {
+        "command": "clautana.submitTask",
+        "title": "Submit Task to Orchestrator",
+        "category": "Clautana",
+        "icon": "$(play)"
+      },
+      {
+        "command": "clautana.initProject",
+        "title": "Initialize Clautana for Project",
+        "category": "Clautana",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "clautana.spawnAgent",
+        "title": "Manually Spawn Agent",
+        "category": "Clautana"
+      },
+      {
+        "command": "clautana.destroyAgent",
+        "title": "Remove Agent",
+        "category": "Clautana"
+      },
+      {
+        "command": "clautana.sendToAgent",
+        "title": "Send Selection to Agent",
+        "category": "Clautana"
+      },
+      {
+        "command": "clautana.stopAll",
+        "title": "Stop All Agents",
+        "category": "Clautana",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "clautana.viewStatus",
+        "title": "View Agent Status",
+        "category": "Clautana"
+      },
+      {
+        "command": "clautana.refreshClaims",
+        "title": "Refresh File Claims",
+        "category": "Clautana"
+      },
+      {
+        "command": "clautana.pauseAgent",
+        "title": "Pause Agent",
+        "category": "Clautana",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "clautana.resumeAgent",
+        "title": "Resume Agent",
+        "category": "Clautana",
+        "icon": "$(debug-continue)"
+      },
+      {
+        "command": "clautana.openConfig",
+        "title": "Open Clautana Config",
+        "category": "Clautana",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "clautana.viewMemory",
+        "title": "View Agent Memory",
+        "category": "Clautana"
+      },
+      {
+        "command": "clautana.openAgentView",
+        "title": "Open Agent Detail View",
+        "category": "Clautana",
+        "icon": "$(window)"
+      },
+      {
+        "command": "clautana.openKanban",
+        "title": "Open Kanban Board",
+        "category": "Clautana",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "clautana.createWorkItem",
+        "title": "Create Work Item",
+        "category": "Clautana",
+        "icon": "$(add)"
+      },
+      {
+        "command": "clautana.refreshKanban",
+        "title": "Refresh Kanban Board",
+        "category": "Clautana",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "clautana.openKnowledgeExplorer",
+        "title": "Open Knowledge Explorer",
+        "category": "Clautana",
+        "icon": "$(book)"
+      },
+      {
+        "command": "clautana.archiveMessage",
+        "title": "Archive Message",
+        "category": "Clautana",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "clautana.unarchiveMessage",
+        "title": "Unarchive Message",
+        "category": "Clautana",
+        "icon": "$(inbox)"
+      },
+      {
+        "command": "clautana.viewMessage",
+        "title": "View Message",
+        "category": "Clautana",
+        "icon": "$(file)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "clautana",
+          "title": "Clautana",
+          "icon": "resources/agent-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "clautana": [
+        {
+          "id": "clautana.panel",
+          "type": "webview",
+          "name": "Orchestrator Chat",
+          "contextualTitle": "Clautana Orchestrator",
+          "visibility": "visible"
+        },
+        {
+          "id": "clautana.agents",
+          "name": "Agents",
+          "contextualTitle": "Active Agents",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "clautana.claims",
+          "name": "File Claims",
+          "contextualTitle": "Active File Claims",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "clautana.messages",
+          "name": "Messages",
+          "contextualTitle": "Agent Messages",
+          "visibility": "collapsed"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "clautana.agents",
+        "contents": "No agents running.\nSubmit a task to the orchestrator to spawn agents."
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "clautana.sendToAgent",
+          "when": "editorHasSelection",
+          "group": "clautana"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "clautana.pauseAgent",
+          "when": "view == clautana.agents && viewItem == agent",
+          "group": "inline"
+        },
+        {
+          "command": "clautana.openAgentView",
+          "when": "view == clautana.agents && viewItem == agent",
+          "group": "navigation"
+        },
+        {
+          "command": "clautana.destroyAgent",
+          "when": "view == clautana.agents && viewItem == agent"
+        },
+        {
+          "command": "clautana.archiveMessage",
+          "when": "view == clautana.messages && viewItem == message",
+          "group": "inline"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "clautana.openKanban",
+          "when": "view == clautana.panel",
+          "group": "navigation@1"
+        },
+        {
+          "command": "clautana.openKnowledgeExplorer",
+          "when": "view == clautana.panel",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Clautana",
+      "properties": {
+        "clautana.coordinatorModel": {
+          "type": "string",
+          "default": "claude-sonnet-4-20250514",
+          "description": "Model to use for the orchestrator agent"
+        },
+        "clautana.workerModel": {
+          "type": "string",
+          "default": "claude-sonnet-4-20250514",
+          "description": "Model to use for spawned worker agents"
+        },
+        "clautana.maxConcurrentAgents": {
+          "type": "number",
+          "default": 5,
+          "description": "Maximum number of concurrent worker agents"
+        },
+        "clautana.autoSpawnAgents": {
+          "type": "boolean",
+          "default": true,
+          "description": "Let orchestrator automatically spawn agents (vs manual control)"
+        },
+        "clautana.mcpServers": {
+          "type": "object",
+          "default": {},
+          "description": "Additional MCP server configurations for agents"
+        },
+        "clautana.showClaimsInEditor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show file claim indicators in editor gutter"
+        },
+        "clautana.notifyOnAgentMessage": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show notification when agents send messages"
+        },
+        "clautana.workingDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Working directory for agents (defaults to workspace root)"
+        },
+        "clautana.agentColorPalette": {
+          "type": "array",
+          "default": ["#3B82F6", "#EF4444", "#F59E0B", "#10B981", "#8B5CF6", "#EC4899", "#06B6D4", "#84CC16"],
+          "description": "Color palette for dynamically spawned agents"
+        },
+        "clautana.memory.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable persistent agent memory"
+        },
+        "clautana.memory.decayDays": {
+          "type": "number",
+          "default": 90,
+          "description": "Memory decay half-life in days"
+        },
+        "clautana.hooks.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable agent hooks (OnAgentFinished, etc.)"
+        },
+        "clautana.autoReview": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically spawn a review agent when agents complete"
+        }
+      }
+    },
+    "colors": [
+      {
+        "id": "clautana.claimExclusiveBackground",
+        "description": "Background color for exclusively claimed files",
+        "defaults": {
+          "dark": "#F59E0B20",
+          "light": "#F59E0B20"
+        }
+      },
+      {
+        "id": "clautana.claimSharedBackground",
+        "description": "Background color for shared claimed files",
+        "defaults": {
+          "dark": "#3B82F620",
+          "light": "#3B82F620"
+        }
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "clautana.agentView",
+        "displayName": "Clautana Agent View",
+        "selector": [
+          {
+            "filenamePattern": "*.clautana"
+          }
+        ],
+        "priority": "default"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "npm run build:extension && npm run build:webview",
+    "build:extension": "webpack --mode production",
+    "build:webview": "cd webview-ui && npm run build",
+    "watch": "webpack --mode development --watch",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTests.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+    "js-yaml": "^4.1.0",
+    "uuid": "^9.0.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.0.0",
+    "@types/uuid": "^9.0.7",
+    "@types/vscode": "^1.84.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.50.0",
+    "typescript": "^5.2.0",
+    "webpack": "^5.88.0",
+    "webpack-cli": "^5.1.0",
+    "ts-loader": "^9.4.0"
+  }
+}

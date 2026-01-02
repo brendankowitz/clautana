@@ -1,0 +1,49 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "watch",
+      "problemMatcher": "$tsc-watch",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "never"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "label": "npm: watch"
+    },
+    {
+      "type": "npm",
+      "script": "build",
+      "problemMatcher": "$tsc",
+      "group": "build",
+      "label": "npm: build"
+    },
+    {
+      "type": "npm",
+      "script": "build:extension",
+      "problemMatcher": [],
+      "group": "build",
+      "label": "npm: build:extension"
+    },
+    {
+      "type": "npm",
+      "script": "build:webview",
+      "problemMatcher": [],
+      "group": "build",
+      "label": "npm: build:webview",
+      "options": {
+        "cwd": "${workspaceFolder}/webview-ui"
+      }
+    },
+    {
+      "label": "Build All",
+      "dependsOn": ["npm: build:extension", "npm: build:webview"],
+      "group": "build",
+      "problemMatcher": []
+    }
+  ]
+}
