@@ -32,6 +32,7 @@ interface OrchestratorState {
   status: 'idle' | 'processing' | 'error';
   currentTask?: string;
   messages: OrchestratorMessage[];
+  contextUsage?: number;
 }
 
 export interface AgentState {
@@ -65,6 +66,8 @@ export function App() {
   const [selectedAgentName, setSelectedAgentName] = useState<string | null>(null);
   const [showAgentDetail, setShowAgentDetail] = useState(false);
   const [commandQueue, setCommandQueue] = useState<string[]>([]);
+  const [unreadMessages, setUnreadMessages] = useState(0);
+  const [pendingWorkItems, setPendingWorkItems] = useState(0);
   const isProcessingRef = useRef(false);
 
   useEffect(() => {
@@ -79,6 +82,8 @@ export function App() {
         case 'state':
           setOrchestrator(message.orchestrator);
           setAgents(message.agents);
+          setUnreadMessages(message.unreadMessages || 0);
+          setPendingWorkItems(message.pendingWorkItems || 0);
           break;
 
         case 'orchestratorUpdate':
@@ -229,6 +234,10 @@ export function App() {
           isProcessing={orchestrator.status === 'processing'}
           currentTask={orchestrator.currentTask}
           onStop={stopAll}
+          unreadMessages={unreadMessages}
+          pendingWorkItems={pendingWorkItems}
+          contextUsage={orchestrator.contextUsage}
+          onSubmitTask={submitTask}
         />
 
         <ChatInput

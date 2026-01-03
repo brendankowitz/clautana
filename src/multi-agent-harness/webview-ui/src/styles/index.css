@@ -378,6 +378,19 @@ body {
   font-size: 1.2em;
 }
 
+.context-usage-indicator {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  margin-left: 8px;
+  font-size: 0.75em;
+  font-weight: 500;
+  background-color: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
 .stop-button {
   display: flex;
   align-items: center;
@@ -462,6 +475,57 @@ body {
 .chat-empty-state p {
   font-size: 0.9em;
   max-width: 280px;
+}
+
+.action-items {
+  margin-top: 16px;
+  width: 100%;
+  max-width: 400px;
+}
+
+.action-items p {
+  margin-bottom: 12px;
+  font-weight: 500;
+}
+
+.action-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.action-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background-color: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: 1px solid var(--vscode-button-border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 0.9em;
+  font-weight: 500;
+}
+
+.action-button:hover {
+  background-color: var(--vscode-button-secondaryHoverBackground);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.action-button:active {
+  transform: translateY(0);
+}
+
+.action-icon {
+  font-size: 1.2em;
+}
+
+.action-text {
+  flex: 1;
+  text-align: left;
 }
 
 /* Processing Indicator */

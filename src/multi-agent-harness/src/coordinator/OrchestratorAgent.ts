@@ -190,6 +190,8 @@ export class OrchestratorAgent extends EventEmitter {
   private _messageQueue: string[] = [];
   private _isProcessingQueue = false;
   private workItemWatcherInitialized = false;
+  private _contextTokens = 0;
+  private _maxContextTokens = 200000; // Sonnet 4 context window
 
   constructor(
     _context: vscode.ExtensionContext,
@@ -197,6 +199,20 @@ export class OrchestratorAgent extends EventEmitter {
   ) {
     super();
     this.outputChannel = vscode.window.createOutputChannel("Multi-Agent Orchestrator");
+  }
+
+  /**
+   * Get current context usage (0-100%)
+   */
+  get contextUsage(): number {
+    return Math.min(100, Math.round((this._contextTokens / this._maxContextTokens) * 100));
+  }
+
+  /**
+   * Estimate tokens for a string (rough approximation: ~4 chars per token)
+   */
+  private estimateTokens(text: string): number {
+    return Math.ceil(text.length / 4);
   }
 
   /**
@@ -226,6 +242,11 @@ export class OrchestratorAgent extends EventEmitter {
       content: task,
       timestamp: new Date(),
     });
+
+    // Track token usage for context indicator
+    this._contextTokens += this.estimateTokens(task);
+    this.emit("contextUsageChanged", this.contextUsage);
+
     this.emit("message", this._messages[this._messages.length - 1]);
 
     // Queue the task for processing
@@ -425,6 +446,11 @@ export class OrchestratorAgent extends EventEmitter {
               content: block.text,
               timestamp: new Date(),
             });
+
+            // Track token usage for context indicator
+            this._contextTokens += this.estimateTokens(block.text);
+            this.emit("contextUsageChanged", this.contextUsage);
+
             this.emit("message", this._messages[this._messages.length - 1]);
           }
 

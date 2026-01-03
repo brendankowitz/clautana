@@ -13,6 +13,7 @@ export default defineConfig({
         'agent-view': resolve(__dirname, 'agent-view.html'),
         kanban: resolve(__dirname, 'kanban.html'),
         knowledge: resolve(__dirname, 'knowledge.html'),
+        investigation: resolve(__dirname, 'investigation.html'),
       },
       output: {
         entryFileNames: 'assets/[name].js',

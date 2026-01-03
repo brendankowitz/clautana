@@ -24,6 +24,7 @@ export class ConfigManager {
   private configPath: string;
   private memoryPath: string;
   private workspaceRoot: string;
+  private configChangeListeners: Array<() => void> = [];
 
   constructor(workspaceRoot?: string) {
     this.workspaceRoot =
@@ -223,8 +224,11 @@ export class ConfigManager {
   /**
    * Get the current config (cached)
    */
-  getConfig(): ClautanaConfig | null {
-    return this.config;
+  async getConfig(): Promise<ClautanaConfig> {
+    if (!this.config) {
+      await this.loadConfig();
+    }
+    return this.config || { name: '', agents: { maxConcurrent: 5 } };
   }
 
   /**
@@ -358,6 +362,31 @@ export class ConfigManager {
     }
 
     return parts.join("\n");
+  }
+
+  /**
+   * Update workflow mode
+   */
+  async updateWorkflowMode(mode: 'adr' | 'spec-kit' | 'hybrid' | 'auto'): Promise<void> {
+    const config = await this.getConfig();
+    config.workflow = config.workflow || {};
+    config.workflow.mode = mode;
+    await this.saveConfig(config);
+    this.notifyConfigChanged();
+  }
+
+  /**
+   * Register a listener for config changes
+   */
+  onConfigChanged(callback: () => void): void {
+    this.configChangeListeners.push(callback);
+  }
+
+  /**
+   * Notify all listeners that config has changed
+   */
+  private notifyConfigChanged(): void {
+    this.configChangeListeners.forEach(listener => listener());
   }
 }
 

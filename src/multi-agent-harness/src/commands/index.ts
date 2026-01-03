@@ -5,9 +5,55 @@ import { WebviewProvider } from "../providers/WebviewProvider";
 import { MessagesTreeProvider } from "../providers/MessagesTreeProvider";
 import { KanbanPanel } from "../providers/KanbanPanel";
 import { KnowledgePanel } from "../providers/KnowledgePanel";
+import { InvestigationPanel } from "../providers/InvestigationPanel";
 import { getMemoryManager } from "../clautana/MemoryManager";
 import { getWorkItemManager } from "../kanban";
 import { COMMANDS } from "../constants";
+
+// Re-export slash command types and utilities for external use
+export {
+  SLASH_COMMANDS,
+  SlashCommand,
+  WorkflowMode,
+  SlashCommandCompletionProvider,
+  SlashCommandQuickPick,
+  WorkflowModeStatusBar,
+  ContextualCommandSuggester,
+  registerSlashCommands,
+} from "./DynamicSlashCommands";
+
+// Re-export ADR workflow handlers
+export {
+  type AdrHandlerContext,
+  type AdrHandlerResult,
+  handleFnFeature,
+  handleFnInvestigation,
+  handleFnAdr,
+  handleFnReject,
+  handleFnTask,
+  handleFnAccept,
+  handleFnReview,
+  handleFnDocument,
+  adrWorkflowHandlers,
+  executeAdrCommand,
+} from "../workflows";
+
+// Re-export Spec-Kit workflow handlers
+export {
+  type SpecKitHandlerContext,
+  type SpecKitHandlerResult,
+  handleSpecKitInit,
+  handleSpecKitConstitution,
+  handleSpecKitSpecify,
+  handleSpecKitPlan,
+  handleSpecKitTasks,
+  handleSpecKitImplement,
+  handleSpecKitClarify,
+  handleSpecKitAnalyze,
+  specKitHandlers,
+  executeSpecKitCommand,
+  getSpecKitCommands,
+} from "../workflows";
 
 export function registerCommands(
   context: vscode.ExtensionContext,
@@ -415,6 +461,13 @@ export function registerCommands(
   context.subscriptions.push(
     vscode.commands.registerCommand(COMMANDS.OPEN_KNOWLEDGE_EXPLORER, () => {
       KnowledgePanel.createOrShow(context);
+    })
+  );
+
+  // Open Investigation Browser
+  context.subscriptions.push(
+    vscode.commands.registerCommand(COMMANDS.OPEN_INVESTIGATION_BROWSER, () => {
+      InvestigationPanel.createOrShow(context);
     })
   );
 

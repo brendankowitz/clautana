@@ -6,6 +6,7 @@ import { getMemoryManager } from "../clautana/MemoryManager";
 import { AgentEditorProvider } from "../providers/AgentEditorProvider";
 import { getProfileManager, isVSCodeLLMAvailable, getVSCodeLLMModels } from "../clautana/AgentProfiles";
 import { MemoryType } from "../clautana/types";
+import { executeAdrCommand, type AdrHandlerContext } from "../workflows/AdrWorkflowHandlers";
 
 /**
  * Represents a slash command that can be invoked from the chat panel
@@ -1471,6 +1472,111 @@ function generateMarkdownExport(data: ExportData): string {
 
   return md;
 }
+
+// ============================================================================
+// ADR Workflow Commands
+// ============================================================================
+
+/**
+ * Helper to create ADR workflow command handlers
+ */
+function registerAdrCommand(
+  name: string,
+  description: string,
+  help: string,
+  args?: SlashCommand['args']
+): void {
+  slashCommands.register({
+    name,
+    description,
+    help,
+    args,
+    async execute(ctx): Promise<SlashCommandResult> {
+      const adrCtx: AdrHandlerContext = {
+        args: ctx.args,
+        argsRaw: ctx.argsRaw,
+        orchestrator: ctx.orchestrator,
+        agentPool: ctx.agentPool,
+        extensionContext: ctx.extensionContext,
+      };
+
+      const result = await executeAdrCommand(name, adrCtx);
+
+      return {
+        success: result.success,
+        message: result.message,
+        data: result.data,
+      };
+    },
+  });
+}
+
+// Register all ADR workflow commands
+registerAdrCommand(
+  'fn-feature',
+  'Create a new feature area for investigation',
+  'Creates a feature folder in .clautana/features/ with README and investigations subfolder.\n\nUsage: /fn-feature <feature-name>\nExample: /fn-feature api-caching',
+  [{ name: 'feature-name', description: 'Name of the feature', required: true }]
+);
+
+registerAdrCommand(
+  'fn-investigation',
+  'Add an investigation exploring one approach',
+  'Creates an investigation document in .clautana/features/<feature>/investigations/.\n\nUsage: /fn-investigation <feature-name> <investigation-topic>\nExample: /fn-investigation api-caching redis-approach',
+  [
+    { name: 'feature-name', description: 'Name of the feature', required: true },
+    { name: 'investigation-topic', description: 'Topic of the investigation', required: true },
+  ]
+);
+
+registerAdrCommand(
+  'fn-adr',
+  'Create ADR from viable investigations',
+  'Creates an Architecture Decision Record in .clautana/adr/ based on completed investigations.\n\nUsage: /fn-adr <feature-name>\nExample: /fn-adr api-caching',
+  [{ name: 'feature-name', description: 'Name of the feature', required: true }]
+);
+
+registerAdrCommand(
+  'fn-reject',
+  'Formally reject an investigation with reasoning',
+  'Marks an investigation as rejected and archives it with the rejection reason.\n\nUsage: /fn-reject <feature-name> <investigation-topic>\nExample: /fn-reject api-caching in-memory-only',
+  [
+    { name: 'feature-name', description: 'Name of the feature', required: true },
+    { name: 'investigation-topic', description: 'Topic to reject', required: true },
+  ]
+);
+
+registerAdrCommand(
+  'fn-task',
+  'Implement and iterate on ADR tasks',
+  'Spawns an implementation agent to work on tasks from an ADR.\n\nUsage: /fn-task\nThe command will prompt you to select an ADR and tasks to work on.',
+  []
+);
+
+registerAdrCommand(
+  'fn-accept',
+  'Accept implemented ADR and move to docs/adr/',
+  'Marks an ADR as accepted and moves it to the official docs/adr/ directory.\n\nUsage: /fn-accept <feature-name>\nExample: /fn-accept api-caching',
+  [{ name: 'feature-name', description: 'Name of the feature', required: true }]
+);
+
+registerAdrCommand(
+  'fn-review',
+  'Technical code review before acceptance',
+  'Spawns a code reviewer agent to review the implementation of an ADR.\n\nUsage: /fn-review\nThe command will prompt you to select an ADR to review.',
+  []
+);
+
+registerAdrCommand(
+  'fn-document',
+  'Update documentation for implemented feature',
+  'Spawns a documentation agent to update docs for a feature.\n\nUsage: /fn-document <feature-name>\nExample: /fn-document api-caching',
+  [{ name: 'feature-name', description: 'Name of the feature', required: true }]
+);
+
+// ============================================================================
+// Export Helpers
+// ============================================================================
 
 function generateHtmlExport(data: ExportData): string {
   const escapeHtml = (str: string) =>

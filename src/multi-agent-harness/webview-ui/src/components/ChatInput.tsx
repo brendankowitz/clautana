@@ -3,31 +3,8 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 interface SlashCommand {
   name: string;
   description: string;
-  category: 'orchestrator' | 'workitems' | 'agents' | 'memory' | 'help';
+  args?: string;
 }
-
-const SLASH_COMMANDS: SlashCommand[] = [
-  { name: '/help', description: 'Show available commands', category: 'help' },
-  { name: '/status', description: 'Show status of all active agents', category: 'orchestrator' },
-  { name: '/spawn', description: 'Create a new specialist agent', category: 'orchestrator' },
-  { name: '/stop', description: 'Stop a running agent', category: 'orchestrator' },
-  { name: '/workitems', description: 'List all work items on the Kanban board', category: 'workitems' },
-  { name: '/create-story', description: 'Create a new User Story', category: 'workitems' },
-  { name: '/assign', description: 'Assign a work item to an agent', category: 'workitems' },
-  { name: '/move', description: 'Move a work item to a different column', category: 'workitems' },
-  { name: '/message', description: 'Send a message to a specific agent', category: 'agents' },
-  { name: '/inbox', description: 'Check messages from agents', category: 'agents' },
-  { name: '/remember', description: 'Save a fact or lesson to memory', category: 'memory' },
-  { name: '/recall', description: 'Search saved memories and playbooks', category: 'memory' },
-];
-
-const CATEGORY_LABELS: Record<string, string> = {
-  help: 'Help',
-  orchestrator: 'Orchestrator',
-  workitems: 'Work Items',
-  agents: 'Agents',
-  memory: 'Memory',
-};
 
 interface ChatInputProps {
   onSubmit: (message: string) => void;
@@ -40,26 +17,45 @@ export function ChatInput({ onSubmit, isProcessing, queueLength = 0, placeholder
   const [value, setValue] = useState('');
   const [showCommands, setShowCommands] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [availableCommands, setAvailableCommands] = useState<SlashCommand[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Request slash commands from extension when value starts with "/"
+  useEffect(() => {
+    if (value.startsWith('/') && typeof window !== 'undefined' && (window as any).vscode) {
+      const vscode = (window as any).vscode;
+      const prefix = value.slice(1);
+      vscode.postMessage({
+        type: 'getSlashCommandCompletions',
+        prefix
+      });
+    }
+  }, [value]);
+
+  // Listen for slash command completions from extension
+  useEffect(() => {
+    if (typeof window === 'undefined' || !(window as any).vscode) return;
+
+    const handleMessage = (event: MessageEvent) => {
+      const message = event.data;
+      if (message.type === 'slashCommandCompletions') {
+        setAvailableCommands(message.completions || []);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
 
   const filteredCommands = useMemo(() => {
     if (!value.startsWith('/')) return [];
     const filter = value.slice(1).toLowerCase();
-    return SLASH_COMMANDS.filter(cmd =>
-      cmd.name.slice(1).toLowerCase().includes(filter) ||
+    return availableCommands.filter(cmd =>
+      cmd.name.toLowerCase().includes(filter) ||
       cmd.description.toLowerCase().includes(filter)
     );
-  }, [value]);
-
-  const groupedCommands = useMemo(() => {
-    const groups: Record<string, SlashCommand[]> = {};
-    for (const cmd of filteredCommands) {
-      if (!groups[cmd.category]) groups[cmd.category] = [];
-      groups[cmd.category].push(cmd);
-    }
-    return groups;
-  }, [filteredCommands]);
+  }, [value, availableCommands]);
 
   useEffect(() => {
     if (value.startsWith('/') && filteredCommands.length > 0) {
@@ -90,7 +86,8 @@ export function ChatInput({ onSubmit, isProcessing, queueLength = 0, placeholder
   }, [selectedIndex, showCommands]);
 
   const selectCommand = useCallback((command: SlashCommand) => {
-    setValue(command.name + ' ');
+    // Keep the "/" prefix when selecting a command
+    setValue('/' + command.name + ' ');
     setShowCommands(false);
     textareaRef.current?.focus();
   }, []);
@@ -98,7 +95,15 @@ export function ChatInput({ onSubmit, isProcessing, queueLength = 0, placeholder
   const handleSubmit = useCallback(() => {
     const trimmed = value.trim();
     if (trimmed) {
-      onSubmit(trimmed);
+      // Check if it's a slash command
+      if (trimmed.startsWith('/')) {
+        // Execute as slash command
+        const vscode = (window as any).vscode;
+        vscode?.postMessage({ type: 'executeSlashCommand', command: trimmed });
+      } else {
+        // Submit as regular task
+        onSubmit(trimmed);
+      }
       setValue('');
       setShowCommands(false);
     }
@@ -136,32 +141,28 @@ export function ChatInput({ onSubmit, isProcessing, queueLength = 0, placeholder
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => setValue(e.target.value);
   const handleBlur = () => setTimeout(() => setShowCommands(false), 150);
   const canSubmit = value.trim().length > 0;
-  let flatIndex = 0;
   const willQueue = isProcessing && canSubmit;
 
   return (
     <div className="chat-input-container">
       {showCommands && filteredCommands.length > 0 && (
         <div className="command-dropdown" ref={dropdownRef}>
-          {Object.entries(groupedCommands).map(([category, commands]) => (
-            <div key={category} className="command-category">
-              <div className="command-category-header">{CATEGORY_LABELS[category] || category}</div>
-              {commands.map((cmd) => {
-                const idx = flatIndex++;
-                return (
-                  <div
-                    key={cmd.name}
-                    className={`command-item ${idx === selectedIndex ? 'selected' : ''}`}
-                    onClick={() => selectCommand(cmd)}
-                    onMouseEnter={() => setSelectedIndex(idx)}
-                  >
-                    <span className="command-name">{cmd.name}</span>
-                    <span className="command-description">{cmd.description}</span>
-                  </div>
-                );
-              })}
-            </div>
-          ))}
+          <div className="command-category">
+            {filteredCommands.map((cmd, idx) => (
+              <div
+                key={cmd.name}
+                className={`command-item ${idx === selectedIndex ? 'selected' : ''}`}
+                onClick={() => selectCommand(cmd)}
+                onMouseEnter={() => setSelectedIndex(idx)}
+              >
+                <span className="command-name">{cmd.name}</span>
+                <span className="command-description">
+                  {cmd.description}
+                  {cmd.args && <span className="command-args"> {cmd.args}</span>}
+                </span>
+              </div>
+            ))}
+          </div>
           <div className="command-hint">
             <kbd>↑↓</kbd> navigate <kbd>Tab</kbd> select <kbd>Esc</kbd> close
           </div>

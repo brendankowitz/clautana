@@ -117,11 +117,13 @@ export class MessagesTreeProvider implements vscode.TreeDataProvider<FolderTreeI
     });
 
     // Listen to archive/unarchive events
-    globalMessageStore.on("messageArchived", () => {
+    globalMessageStore.on("messageArchived", async () => {
+      await this.reloadMessagesFromStore();
       this.refresh();
     });
 
-    globalMessageStore.on("messageUnarchived", () => {
+    globalMessageStore.on("messageUnarchived", async () => {
+      await this.reloadMessagesFromStore();
       this.refresh();
     });
 

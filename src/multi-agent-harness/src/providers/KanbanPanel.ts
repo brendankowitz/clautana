@@ -57,7 +57,7 @@ export class KanbanPanel {
 
     const panel = vscode.window.createWebviewPanel(
       "clautana.kanbanBoard",
-      "Clautana Kanban",
+      "Taskboard",
       column,
       {
         enableScripts: true,
@@ -189,6 +189,7 @@ export class KanbanPanel {
   private setupMessageHandler(): void {
     this.panel.webview.onDidReceiveMessage(
       async (message) => {
+        console.log('[KanbanPanel] Received message:', message.type, message);
         switch (message.type) {
           case "getState":
             await this.sendFullState();
@@ -203,9 +204,11 @@ export class KanbanPanel {
             await this.handleCancelItem(message);
             break;
           case "deleteItem":
+            console.log('[KanbanPanel] Handling deleteItem for:', message.itemId);
             await this.handleDeleteItem(message);
             break;
           case "archiveItem":
+            console.log('[KanbanPanel] Handling archiveItem for:', message.itemId);
             await this.handleArchiveItem(message);
             break;
           case "createItem":
@@ -214,6 +217,8 @@ export class KanbanPanel {
           case "assignItem":
             await this.handleAssignItem(message);
             break;
+          default:
+            console.log('[KanbanPanel] Unknown message type:', message.type);
         }
       },
       null,
@@ -304,9 +309,12 @@ export class KanbanPanel {
   }
 
   private async handleDeleteItem(message: { itemId: string }): Promise<void> {
+    console.log('[KanbanPanel] handleDeleteItem called with:', message.itemId);
     try {
       const workItemManager = await getWorkItemManagerModule();
+      console.log('[KanbanPanel] Got work item manager, calling deleteItem...');
       await workItemManager.deleteItem(message.itemId);
+      console.log('[KanbanPanel] Item deleted successfully:', message.itemId);
     } catch (error) {
       console.error("[KanbanPanel] Failed to delete item:", error);
       this.postMessage({
@@ -317,11 +325,14 @@ export class KanbanPanel {
   }
 
   private async handleArchiveItem(message: { itemId: string }): Promise<void> {
+    console.log('[KanbanPanel] handleArchiveItem called with:', message.itemId);
     try {
       const workItemManager = await getWorkItemManagerModule();
+      console.log('[KanbanPanel] Got work item manager, archiving item...');
       // Archive by deleting the item from the board
       // In the future, this could be enhanced to move items to a separate archive location
       await workItemManager.deleteItem(message.itemId);
+      console.log('[KanbanPanel] Item archived successfully:', message.itemId);
 
       this.postMessage({
         type: "itemArchived",
@@ -403,6 +414,7 @@ export class KanbanPanel {
       description: item.description,
       priority: item.priority,
       status: item.status,
+      type: item.type,
       assignee: item.assignee,
       reviewer: item.reviewer,
       tags: item.tags,
@@ -411,6 +423,7 @@ export class KanbanPanel {
       completed: item.completed instanceof Date ? item.completed.toISOString() : item.completed,
       estimatedHours: item.estimatedHours,
       filePath: item.filePath,
+      featureRef: item.featureRef,
     };
   }
 
@@ -427,6 +440,7 @@ export class KanbanPanel {
       agentName: todo.agentName,
       createdAt: todo.createdAt instanceof Date ? todo.createdAt.toISOString() : todo.createdAt,
       completedAt: todo.completedAt instanceof Date ? todo.completedAt.toISOString() : todo.completedAt,
+      storyId: todo.storyId,
     };
   }
 
@@ -452,7 +466,7 @@ export class KanbanPanel {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' ${webview.cspSource};">
   <link href="${styleUri}" rel="stylesheet">
-  <title>Clautana Kanban</title>
+  <title>Taskboard</title>
   <style>
     body { padding: 0; margin: 0; }
     .kanban-app-container { height: 100vh; }

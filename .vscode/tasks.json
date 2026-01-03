@@ -1,0 +1,50 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "watch",
+      "path": "src/multi-agent-harness/",
+      "problemMatcher": "$tsc-watch",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "never"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "label": "npm: watch"
+    },
+    {
+      "type": "npm",
+      "script": "build",
+      "path": "src/multi-agent-harness/",
+      "problemMatcher": "$tsc",
+      "group": "build",
+      "label": "npm: build"
+    },
+    {
+      "type": "npm",
+      "script": "build:extension",
+      "path": "src/multi-agent-harness/",
+      "problemMatcher": [],
+      "group": "build",
+      "label": "npm: build:extension"
+    },
+    {
+      "type": "npm",
+      "script": "build:webview",
+      "path": "src/multi-agent-harness/webview-ui/",
+      "problemMatcher": [],
+      "group": "build",
+      "label": "npm: build:webview"
+    },
+    {
+      "label": "Build All",
+      "dependsOn": ["npm: build:extension", "npm: build:webview"],
+      "group": "build",
+      "problemMatcher": []
+    }
+  ]
+}

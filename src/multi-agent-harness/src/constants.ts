@@ -23,6 +23,8 @@ export const COMMANDS = {
   REFRESH_KANBAN: 'clautana.refreshKanban',
   // Knowledge Explorer
   OPEN_KNOWLEDGE_EXPLORER: 'clautana.openKnowledgeExplorer',
+  // Investigation Browser
+  OPEN_INVESTIGATION_BROWSER: 'clautana.openInvestigationBrowser',
   // Message commands
   ARCHIVE_MESSAGE: 'clautana.archiveMessage',
   UNARCHIVE_MESSAGE: 'clautana.unarchiveMessage',

@@ -196,30 +196,28 @@ export function KanbanBoard() {
 
   const handleDelete = useCallback(
     (item: WorkItem) => {
-      const confirmed = window.confirm(
-        `Permanently delete "${item.title}"?\n\nThis action cannot be undone.`
-      );
-      if (confirmed) {
-        vscode.postMessage({
-          type: "deleteItem",
-          itemId: item.id,
-        });
-      }
+      // Optimistic update - remove from UI immediately
+      setItems((prev) => prev.filter((i) => i.id !== item.id));
+
+      // Send delete message to backend
+      vscode.postMessage({
+        type: "deleteItem",
+        itemId: item.id,
+      });
     },
     [vscode]
   );
 
   const handleArchive = useCallback(
     (item: WorkItem) => {
-      const confirmed = window.confirm(
-        `Archive "${item.title}"?\n\nArchived items can be restored later.`
-      );
-      if (confirmed) {
-        vscode.postMessage({
-          type: "archiveItem",
-          itemId: item.id,
-        });
-      }
+      // Optimistic update - remove from UI immediately
+      setItems((prev) => prev.filter((i) => i.id !== item.id));
+
+      // Send archive message to backend
+      vscode.postMessage({
+        type: "archiveItem",
+        itemId: item.id,
+      });
     },
     [vscode]
   );
@@ -453,6 +451,9 @@ function KanbanCard({
 }: KanbanCardProps) {
   const [isDragging, setIsDragging] = useState(false);
 
+  // Debug: Log when card is rendered
+  console.log(`[KanbanCard] Rendered card ${item.id} in status ${item.status}, onDelete is:`, typeof onDelete);
+
   const handleDragStart = (e: React.DragEvent) => {
     e.dataTransfer.setData("text/plain", item.id);
     e.dataTransfer.effectAllowed = "move";
@@ -601,8 +602,11 @@ function KanbanCard({
             <button
               className="card-action-button delete-button"
               onClick={(e) => {
+                console.log('[KanbanCard] Delete button CLICKED!', item.id);
                 e.stopPropagation();
+                console.log('[KanbanCard] About to call onDelete');
                 onDelete(item);
+                console.log('[KanbanCard] onDelete called');
               }}
               title="Delete permanently"
               aria-label="Delete item"

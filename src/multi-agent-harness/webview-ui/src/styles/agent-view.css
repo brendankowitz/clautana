@@ -164,6 +164,40 @@
   border: 1px solid var(--vscode-panel-border);
   border-left: 3px solid;
   border-radius: 6px;
+  position: relative;
+  overflow: hidden;
+  transition: box-shadow 0.3s ease;
+}
+
+.agent-card.working {
+  box-shadow: 0 0 0 1px var(--vscode-focusBorder, rgba(59, 130, 246, 0.3));
+}
+
+/* Progress bar animation for working agents */
+.agent-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background-color: var(--vscode-panel-border);
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  width: 40%;
+  animation: progressSlide 1.5s ease-in-out infinite;
+  box-shadow: 0 0 10px currentColor;
+}
+
+@keyframes progressSlide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
 }
 
 .agent-card-header {
@@ -178,6 +212,47 @@
   height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
+  position: relative;
+}
+
+/* Pulse animation for working agents */
+.agent-color-dot.pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.agent-color-dot.pulse::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background-color: inherit;
+  animation: pulsering 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@keyframes pulsering {
+  0% {
+    width: 100%;
+    height: 100%;
+    opacity: 1;
+  }
+  100% {
+    width: 250%;
+    height: 250%;
+    opacity: 0;
+  }
 }
 
 .agent-card .agent-name {

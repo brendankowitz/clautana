@@ -32,6 +32,17 @@ export interface ClautanaConfig {
 
   /** File patterns to ignore */
   ignore?: string[];
+
+  /** Workflow settings */
+  workflow?: WorkflowConfig;
+}
+
+/**
+ * Workflow mode configuration
+ */
+export interface WorkflowConfig {
+  /** Current workflow mode */
+  mode?: 'adr' | 'spec-kit' | 'hybrid' | 'auto';
 }
 
 /**

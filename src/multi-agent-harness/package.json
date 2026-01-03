@@ -119,6 +119,12 @@
         "icon": "$(book)"
       },
       {
+        "command": "clautana.openInvestigationBrowser",
+        "title": "Open Investigation Browser",
+        "category": "Clautana",
+        "icon": "$(search)"
+      },
+      {
         "command": "clautana.archiveMessage",
         "title": "Archive Message",
         "category": "Clautana",
@@ -220,6 +226,11 @@
           "command": "clautana.openKnowledgeExplorer",
           "when": "view == clautana.panel",
           "group": "navigation@2"
+        },
+        {
+          "command": "clautana.openInvestigationBrowser",
+          "when": "view == clautana.panel",
+          "group": "navigation@3"
         }
       ]
     },
@@ -290,6 +301,18 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically spawn a review agent when agents complete"
+        },
+        "clautana.workflow.mode": {
+          "type": "string",
+          "enum": ["adr", "spec-kit", "hybrid", "auto"],
+          "default": "auto",
+          "enumDescriptions": [
+            "ADR Workflow: Investigation-driven with formal decision tracking (/fn-* commands)",
+            "Spec-Kit Workflow: Spec-driven with GitHub templates (/speckit.* commands)",
+            "Hybrid Mode: Use both ADR and Spec-Kit workflows as needed",
+            "Auto-Detect: Automatically choose workflow based on project structure"
+          ],
+          "description": "Workflow mode for slash commands and agent orchestration"
         }
       }
     },

@@ -21,13 +21,14 @@ type WebviewToExtensionMessage =
   | { type: "destroyAgent"; agentName: string }
   | { type: "sendToAgent"; agentName: string; message: string }
   | { type: "executeSlashCommand"; command: string }
+  | { type: "executeCommand"; command: string }
   | { type: "getSlashCommandCompletions"; prefix: string };
 
 /**
  * Message types sent from extension to webview
  */
 type ExtensionToWebviewMessage =
-  | { type: "state"; orchestrator: OrchestratorState; agents: AgentState[] }
+  | { type: "state"; orchestrator: OrchestratorState; agents: AgentState[]; unreadMessages: number; pendingWorkItems: number }
   | { type: "orchestratorUpdate"; updates: Partial<OrchestratorState> }
   | { type: "orchestratorMessage"; message: OrchestratorMessage }
   | { type: "agentSpawned"; agent: AgentState }
@@ -48,6 +49,7 @@ interface OrchestratorState {
   currentTask?: string;
   messages: OrchestratorMessage[];
   sessionId?: string;
+  contextUsage?: number;
 }
 
 /**
@@ -228,6 +230,20 @@ export class WebviewProvider implements vscode.WebviewViewProvider {
     };
     this.agentPool.on("messageReceived", messageReceivedHandler);
     this.disposables.push({ dispose: () => this.agentPool.off("messageReceived", messageReceivedHandler) });
+
+    // Context usage tracking
+    const contextUsageChangedHandler = (contextUsage: number) => {
+      try {
+        this.orchestratorState.contextUsage = contextUsage;
+        this.postMessage({
+          type: "orchestratorUpdate",
+          updates: { contextUsage },
+        });
+      } catch (error) {
+        console.error("Failed to handle context usage change:", error);
+      }
+    };
+    this.orchestrator.on("contextUsageChanged", contextUsageChangedHandler);
   }
 
   /**
@@ -277,10 +293,39 @@ export class WebviewProvider implements vscode.WebviewViewProvider {
           this.buildAgentState(session)
         );
 
+        // Get unread message count
+        let unreadMessages = 0;
+        try {
+          const { globalMessageStore } = await import("../mcp/MailMcpServer");
+          await globalMessageStore.initialize();
+          const allMessages = await globalMessageStore.getAllMessages();
+          unreadMessages = allMessages.filter((m: any) => !m.read && !m.archived).length;
+        } catch (error) {
+          console.error("Failed to get unread messages count:", error);
+        }
+
+        // Get pending work items count
+        let pendingWorkItems = 0;
+        try {
+          const { getWorkItemManager } = await import("../kanban");
+          const workItemManager = getWorkItemManager();
+          const allWorkItems = await workItemManager.listItems();
+          pendingWorkItems = allWorkItems.filter((item: any) =>
+            item.status !== 'done' && item.status !== 'cancelled'
+          ).length;
+        } catch (error) {
+          console.error("Failed to get pending work items count:", error);
+        }
+
+        // Update context usage from orchestrator
+        this.orchestratorState.contextUsage = this.orchestrator.contextUsage;
+
         this.postMessage({
           type: "state",
           orchestrator: this.orchestratorState,
           agents,
+          unreadMessages,
+          pendingWorkItems,
         });
         break;
       }
@@ -378,6 +423,20 @@ export class WebviewProvider implements vscode.WebviewViewProvider {
             }
           }
         } catch (error) {
+          this.postMessage({
+            type: "error",
+            error: `Failed to execute command: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
+        break;
+      }
+
+      case "executeCommand": {
+        // Execute a VS Code command
+        try {
+          await vscode.commands.executeCommand(message.command);
+        } catch (error) {
+          console.error(`Failed to execute command ${message.command}:`, error);
           this.postMessage({
             type: "error",
             error: `Failed to execute command: ${error instanceof Error ? error.message : String(error)}`,

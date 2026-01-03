@@ -48,15 +48,22 @@ export function AgentCard({
     }
   };
 
+  const isWorking = agent.status === 'processing' || agent.status === 'initializing';
+
   return (
     <div
-      className="agent-card"
+      className={`agent-card ${isWorking ? 'working' : ''}`}
       style={{ borderLeftColor: agent.color }}
       data-status={agent.status}
     >
+      {isWorking && (
+        <div className="agent-progress-bar">
+          <div className="progress-bar-fill" style={{ backgroundColor: agent.color }}></div>
+        </div>
+      )}
       <div className="agent-card-header">
         <div
-          className="agent-color-dot"
+          className={`agent-color-dot ${isWorking ? 'pulse' : ''}`}
           style={{ backgroundColor: agent.color }}
         />
         <span className="agent-name">{agent.name}</span>

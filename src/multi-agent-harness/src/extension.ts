@@ -10,6 +10,8 @@ import { StatusBarProvider } from "./providers/StatusBarProvider";
 // AgentEditorProvider disabled - see TODO comment below
 // import { AgentEditorProvider, AgentDocumentProvider } from "./providers/AgentEditorProvider";
 import { registerCommands } from "./commands";
+import { registerSlashCommands } from "./commands/DynamicSlashCommands";
+import { getConfigManager } from "./clautana/ConfigManager";
 import { VIEWS } from "./constants";
 
 let orchestrator: OrchestratorAgent | undefined;
@@ -84,6 +86,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Register commands
   registerCommands(context, orchestrator, agentPool, webviewProvider, messagesTreeProvider);
+
+  // Register slash commands (workflow-aware command completion and status bar)
+  registerSlashCommands(context, getConfigManager());
 
   // Initialize decorators
   decoratorProvider.register(context);
