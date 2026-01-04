@@ -552,8 +552,10 @@ export async function handleFnInvestigation(ctx: AdrHandlerContext): Promise<Adr
 
   // Automatically spawn an agent to help research this investigation
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  const agentName = `${sanitizedTopic}-researcher`;
+
   await ctx.agentPool.spawnAgent({
-    name: `${sanitizedTopic}-researcher`,
+    name: agentName,
     role: 'Technical Researcher',
     focus: `Research and document the ${investigationTopic} approach for the ${featureName} feature. Analyze pros, cons, technical details, and provide a recommendation.`,
     systemPrompt: `You are a technical researcher investigating the "${investigationTopic}" approach for the "${featureName}" feature.
@@ -571,9 +573,20 @@ Update the investigation document at: ${investigationPath}`,
     workingDirectory: workspaceFolder?.uri.fsPath ?? process.cwd(),
   });
 
+  // Show notification that agent has been spawned
+  vscode.window.showInformationMessage(
+    `🔍 Research agent "${agentName}" has been launched to investigate "${investigationTopic}"`,
+    'View Agents'
+  ).then(selection => {
+    if (selection === 'View Agents') {
+      // Open the Agent View panel
+      vscode.commands.executeCommand('clautana.showAgentView');
+    }
+  });
+
   return {
     success: true,
-    message: `Created investigation: **${sanitizedTopic}** for feature **${sanitizedFeature}**\n\nA research agent has been spawned to help investigate this approach.`,
+    message: `Created investigation: **${sanitizedTopic}** for feature **${sanitizedFeature}**`,
     data: {
       path: investigationPath,
       featureName: sanitizedFeature,

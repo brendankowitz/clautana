@@ -151,7 +151,7 @@ export async function createWorkItemsMcpTools(agentName: string): Promise<any[]>
           .default("medium")
           .describe("Priority level"),
         tags: z.array(z.string()).optional().describe("Tags for categorization"),
-        estimatedHours: z.number().optional().describe("Estimated hours to complete"),
+        estimatedHours: z.number().optional().describe("Estimated AGENT HOURS to complete (not human hours)"),
         featureRef: z.string().optional().describe("Reference to parent feature folder (e.g., 'docs/features/kanban-workitems'). Use this when creating stories for ADR/investigation tasks."),
       },
       async (args) => {

@@ -23,6 +23,15 @@ let statusBarProvider: StatusBarProvider | undefined;
 export async function activate(context: vscode.ExtensionContext) {
   console.log("Clautana activating...");
 
+  // Initialize config manager with workspace root first (needed by many components)
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (workspaceRoot) {
+    const { initConfigManager } = await import("./clautana/ConfigManager");
+    initConfigManager(workspaceRoot);
+  } else {
+    console.warn("No workspace folder open - some features may be unavailable");
+  }
+
   // Initialize agent pool (manages worker agents)
   agentPool = new AgentPool(context);
 
@@ -49,8 +58,10 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  // Check inbox on startup for any pending unread messages
-  checkInboxOnStartup(globalMessageStore);
+  // Check inbox on startup for any pending unread messages (fire-and-forget)
+  checkInboxOnStartup(globalMessageStore).catch(err => {
+    console.log("Failed to check inbox on startup:", err instanceof Error ? err.message : String(err));
+  });
 
   // Initialize UI providers
   webviewProvider = new WebviewProvider(context, orchestrator, agentPool);
@@ -88,7 +99,9 @@ export async function activate(context: vscode.ExtensionContext) {
   registerCommands(context, orchestrator, agentPool, webviewProvider, messagesTreeProvider);
 
   // Register slash commands (workflow-aware command completion and status bar)
-  registerSlashCommands(context, getConfigManager());
+  if (workspaceRoot) {
+    registerSlashCommands(context, getConfigManager());
+  }
 
   // Initialize decorators
   decoratorProvider.register(context);

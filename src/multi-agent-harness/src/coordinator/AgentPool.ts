@@ -3,6 +3,7 @@ import { EventEmitter } from "events";
 import { AgentSession } from "./AgentSession";
 import { getGlobalClaimsTracker } from "../mcp/ClaimsMcpServer";
 import { AgentMailClient } from "../mcp/AgentMailClient";
+import { generateUniqueAgentName } from "../utils/agentNaming";
 import {
   SpawnConfig,
   AgentPoolStatus,
@@ -82,8 +83,19 @@ export class AgentPool extends EventEmitter {
       throw new Error(`Maximum concurrent agents (${maxAgents}) reached`);
     }
 
-    if (this.sessions.has(config.name)) {
-      throw new Error(`Agent ${config.name} already exists`);
+    // Generate unique name if the provided name already exists
+    let uniqueName = config.name;
+    if (this.sessions.has(config.name) || this.pendingAgents.has(config.name)) {
+      const existingNames = new Set([
+        ...this.sessions.keys(),
+        ...this.pendingAgents.keys(),
+      ]);
+      uniqueName = generateUniqueAgentName(config.name, existingNames);
+      this.outputChannel.appendLine(
+        `Agent name '${config.name}' already exists, using unique name: ${uniqueName}`
+      );
+      // Update config with the unique name
+      config = { ...config, name: uniqueName };
     }
 
     // Check if dependencies are satisfied
@@ -184,9 +196,25 @@ Your focus: ${config.focus}
 ${workItemInfo}
 You are part of a multi-agent team coordinated by an orchestrator.
 - Use send_message() to communicate with other agents
-- Use inbox() to check for messages
+- Use inbox() to check for messages, then read_message(messageId) to read and respond to them
 - Use reserve_file_paths() before editing files to avoid conflicts
 - When your task is complete, send a message to the orchestrator summarizing your work
+
+IMPORTANT: Periodically check and READ your messages throughout your work:
+1. Call inbox() to see what messages you have
+2. For each message, call read_message(messageId, markAsRead=true) to read the full content
+3. Respond appropriately to the sender if they're waiting for information
+4. Messages may contain critical information:
+   - File coordination requests from other agents
+   - Guidance or instructions from the orchestrator
+   - Questions that block other agents' work
+   - Updates that affect your task
+
+Check your inbox:
+- Before starting significant work
+- After completing major subtasks
+- If you're blocked or waiting on something
+- At natural breakpoints in your workflow
 `;
   }
 

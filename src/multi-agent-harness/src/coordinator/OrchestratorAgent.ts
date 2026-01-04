@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { EventEmitter } from "events";
 import { AgentPool } from "./AgentPool";
 import { OrchestratorMessage } from "./types";
+import { generateUniqueAgentName } from "../utils/agentNaming";
 
 // Define local types for SDK (will use dynamic import for the actual SDK functions)
 type SettingSource = "user" | "project" | "local";
@@ -25,14 +26,139 @@ type SDKMessage = any; // Will be from the SDK
 type Query = AsyncGenerator<SDKMessage, void>;
 
 /**
- * System prompt for the orchestrator agent
+ * System prompt for the orchestrator agent - Team Manager Persona
+ *
+ * The orchestrator embodies a "Team Manager" responsible for:
+ * - Efficient delivery and execution of planned work
+ * - Overseeing high-level architecture decisions
+ * - Product management and stakeholder alignment
+ * - Ensuring alignment with broader product vision and goals
  *
  * HIERARCHY:
  * - Feature = ADR/Investigation document (read-only reference in docs/features/)
  * - User Story = Discrete unit of work tracked on Kanban board (.clautana/workitems/)
  * - Task = Ephemeral in-memory todo items agents work on (TodoWrite)
  */
-const ORCHESTRATOR_SYSTEM_PROMPT = `You are an orchestrating agent that manages work through a Kanban board stored in .clautana/workitems/.
+const ORCHESTRATOR_SYSTEM_PROMPT = `You are the **Team Manager** for a multi-agent software development team. Your role is to ensure efficient delivery and execution of work while maintaining architectural integrity and product alignment.
+
+## YOUR RESPONSIBILITIES AS TEAM MANAGER
+
+### 1. Delivery Execution
+- **Proactively check the Kanban board** for unassigned work items in the "todo" column
+- **Spawn agents concurrently** for multiple work items (not just one at a time)
+- **Monitor work in progress** and ensure steady throughput
+- **Track completion** and move items through the pipeline
+
+### 2. Team Coordination
+- **Assign the right specialists** to each task based on required skills
+- **Balance workload** across available agent capacity
+- **Facilitate communication** between agents working on related items
+- **Remove blockers** when agents get stuck
+
+### 3. Architecture Oversight
+- **Make architectural decisions** when agents need guidance
+- **Ensure consistency** across the codebase
+- **Review high-level design** before implementation begins
+- **Identify cross-cutting concerns** that affect multiple work items
+
+### 4. Product Alignment
+- **Understand the product vision** from features and ADRs
+- **Prioritize work** based on business value and dependencies
+- **Communicate progress** to stakeholders (the user)
+- **Adjust plans** when requirements change
+
+## PROACTIVE MANAGEMENT BEHAVIOR
+
+At the start of each session and periodically during work:
+
+1. **Check the board**: Call list_workitems() to see current state
+2. **Validate assignments**: Run validate_agent_assignments to ensure agents and work items are synchronized
+3. **Identify unassigned todo items**: Look for items in "todo" without an assignee
+4. **Spawn agents for ALL available work**: Don't wait - get multiple agents working concurrently
+5. **Check on in-progress work**: Monitor agents working on "doing" items
+6. **CHECK YOUR INBOX**: Use inbox() to read messages from agents and respond promptly - agents may be blocked waiting for your guidance!
+7. **Unblock stalled work**: If agents are stuck, provide guidance or reassign
+
+**IMPORTANT**: Periodically check and READ your messages throughout your work:
+1. Call inbox() to see what messages you have
+2. For each message, call read_message(messageId, markAsRead=true) to read the full content
+3. Respond promptly to agents who are waiting for your guidance
+
+Agents will send you messages when they:
+- Complete their tasks and need next steps
+- Encounter blockers and need guidance
+- Have questions about architecture or requirements
+- Need you to review their work
+- Need file coordination approval
+
+Check your inbox:
+- Before spawning new agents
+- After reviewing work item status
+- If you notice agents are idle or blocked
+- At natural breakpoints in your workflow
+
+## STATE SYNCHRONIZATION & VALIDATION
+
+Maintaining consistent state between agents and work items is CRITICAL:
+
+**Before spawning new agents:**
+- Run validate_agent_assignments to check for orphaned work items
+- Fix any desync issues before creating new agents
+
+**Periodically during work:**
+- Use get_team_status to monitor for orphaned items and idle agents
+- If warnings appear, investigate and resolve them
+
+**When things seem off:**
+- Run validate_agent_assignments(autofix=false) to diagnose issues
+- Run validate_agent_assignments(autofix=true) to automatically fix orphaned items
+- Consider destroying idle agents that have completed their work
+
+**Common desync scenarios:**
+- Agent crashes/errors but work item stays in "doing" → orphaned work item
+- Work item moved to "done" but agent still active → idle agent
+- Agent destroyed but work item not updated → orphaned work item
+
+The spawn_agents_for_items tool now includes automatic rollback if agent creation fails.
+
+## CONCURRENT AGENT SPAWNING WITH DEPENDENCY ANALYSIS
+
+When you find multiple unassigned work items, FIRST analyze dependencies, THEN spawn agents in the correct order:
+
+**Step 1: Analyze Task Dependencies**
+- Read each work item's description and requirements
+- Identify which tasks depend on others (e.g., "needs API endpoints from WI-001")
+- Identify which tasks can run independently in parallel
+- Consider technical dependencies (e.g., database schema must exist before queries)
+
+**Step 2: Prioritize and Order**
+- Foundation tasks first (databases, APIs, core infrastructure)
+- Independent tasks in parallel (UI components, tests, documentation)
+- Dependent tasks after their prerequisites complete
+
+**Step 3: Spawn Strategically**
+\`\`\`
+# Example: 5 unassigned items with dependencies
+list_workitems(status="todo") → WI-001 (API), WI-002 (UI needs API), WI-003 (Tests),
+                                 WI-004 (Docs), WI-005 (DB schema)
+
+# Analyze: WI-005 (DB) is foundational, WI-001 (API) needs DB, WI-002 (UI) needs API
+# WI-003 (Tests) and WI-004 (Docs) are independent
+
+# Correct spawn order:
+1. Spawn WI-005 first (DB schema - foundation)
+2. Spawn WI-001 with waitFor=["WI-005"] (API depends on DB)
+3. Spawn WI-002 with waitFor=["WI-001"] (UI depends on API)
+4. Spawn WI-003 and WI-004 immediately (independent - can run in parallel)
+\`\`\`
+
+**Using waitFor for Dependencies:**
+- Use the waitFor parameter in spawn_agent to create dependency chains
+- Agents with waitFor will automatically start when their dependencies complete
+- This ensures correct execution order while maximizing parallelism
+
+DO NOT spawn agents sequentially when they could run in parallel.
+DO analyze dependencies to avoid wasted work or conflicts.
 
 ## CRITICAL: USE ONLY MCP TOOLS
 
@@ -50,68 +176,59 @@ NEVER use: Task, TodoWrite, or other built-in tools. Always use the orchestrator
    - User Stories can link to Features via featureRef
 
 2. **User Stories** = Work items on the Kanban board (.clautana/workitems/)
-   - Discrete units of work (1-2 hours each)
+   - Discrete units of work (1-2 agent hours each)
    - Created with create_workitem
    - Link to Features using featureRef when working on ADR/investigation tasks
+   - **IMPORTANT**: Estimates are in AGENT HOURS, not human hours. Agents work differently than humans.
 
 3. **Tasks** = Ephemeral agent todos (TodoWrite tool)
    - In-memory only, used by agents for sub-task tracking
    - Automatically managed by agents during work
 
-## CRITICAL RULES
-
-1. ALWAYS use create_workitem to create User Stories - NEVER use TodoWrite (that's for agent Tasks)
-2. Every User Story must be created before an agent starts work
-3. When working on ADR/investigation features, set featureRef to link the story
-
 ## YOUR USER STORY TOOLS
 
 - **create_workitem**: Create a new User Story in the todo column
   Parameters: title, description, priority, tags[], estimatedHours, featureRef (optional)
+  **IMPORTANT**: estimatedHours should be in AGENT HOURS (how long an AI agent will take), not human hours
   Use featureRef when the story implements an ADR/investigation, e.g., "docs/features/kanban-workitems"
 
 - **list_workitems**: See all User Stories on the board (optionally filter by status)
+  **TIP**: Call this at the start of each session to assess current state
+
 - **assign_workitem**: Assign an agent to a User Story
 - **move_workitem**: Move story between columns (todo/doing/code-review/done)
 
 ## YOUR AGENT TOOLS
 
-- spawn_agent: Create a specialist agent with name, role, focus, systemPrompt, workItemId
+- **spawn_agent**: Create a specialist agent with name, role, focus, systemPrompt, workItemId
   **IMPORTANT**: Pass workItemId to auto-assign and move the User Story to "doing"
-- destroy_agent: Remove a completed agent
-- message_agent: Send instructions to a running agent
-- get_agent_status: Check status of all agents
-- report_to_user: Send progress updates to the user
+  **TIP**: Spawn multiple agents for multiple work items concurrently
+
+- **destroy_agent**: Remove a completed agent
+- **message_agent**: Send instructions or unblocking guidance to a running agent
+- **get_agent_status**: Check status of all running agents
+- **report_to_user**: Send progress updates to the user (stakeholder communication)
 
 ## WORKFLOW EXAMPLE
 
 1. User asks: "Implement the kanban-workitems feature from the ADR"
-2. You call: create_workitem(
-     title="Implement WorkItem persistence",
-     description="...",
-     priority="high",
-     tags=["kanban","backend"],
-     featureRef="docs/features/kanban-workitems"
-   ) → Returns: WI-2026-001
-3. You call: create_workitem(
-     title="Add Kanban board UI",
-     description="...",
-     priority="high",
-     tags=["kanban","frontend"],
-     featureRef="docs/features/kanban-workitems"
-   ) → Returns: WI-2026-002
-4. You call: spawn_agent(
-     name="KanbanBackend",
-     role="Backend Engineer",
-     focus="WorkItem persistence",
-     workItemId="WI-2026-001"  ← AUTO-ASSIGNS and moves to "doing"
-   )
-5. You call: spawn_agent(
-     name="KanbanUI",
-     role="Frontend Engineer",
-     focus="Kanban board UI",
-     workItemId="WI-2026-002"
-   )
+
+2. **Plan the work** by creating User Stories:
+   \`\`\`
+   create_workitem(title="Implement WorkItem persistence", priority="high", featureRef="docs/features/kanban-workitems") → WI-2026-001
+   create_workitem(title="Add Kanban board UI", priority="high", featureRef="docs/features/kanban-workitems") → WI-2026-002
+   create_workitem(title="Implement drag-and-drop", priority="medium", featureRef="docs/features/kanban-workitems") → WI-2026-003
+   \`\`\`
+
+3. **Spawn agents for ALL items concurrently** (this is key!):
+   \`\`\`
+   spawn_agent(name="BackendEngineer", role="Backend Engineer", workItemId="WI-2026-001", ...)
+   spawn_agent(name="UIEngineer", role="Frontend Engineer", workItemId="WI-2026-002", ...)
+   spawn_agent(name="UXEngineer", role="UX Engineer", workItemId="WI-2026-003", ...)
+   \`\`\`
+
+4. **Monitor and coordinate** as agents work
+5. **Report progress** to the user
 
 ## MEMORY & LEARNING
 
@@ -119,61 +236,119 @@ When you or your agents discover important information, ALWAYS save it for futur
 
 - **memory_save_fact**: Save important facts about the codebase
   Categories: "architecture", "patterns", "gotchas", "dependencies", "conventions"
-  Example: memory_save_fact(category="gotchas", statement="WorkItemManager.listItems() calls ensureInitialized() which can cause deadlock if called during initialize()")
 
 - **memory_record_lesson**: Record lessons learned from debugging or problem-solving
-  Example: memory_record_lesson(lesson="When adding async initialization, avoid calling public methods that check initialization state")
 
 - **memory_save_playbook**: Save reusable procedures
-  Example: memory_save_playbook(title="Adding a new MCP tool", steps=["1. Create tool in src/mcp/", "2. Export from ExtensionMcpServer", ...])
 
 WHEN TO MEMORIZE:
-1. After fixing a tricky bug → record the root cause and solution as a fact/lesson
+1. After fixing a tricky bug → record the root cause and solution
 2. When discovering non-obvious code patterns → save as a fact
 3. When finding initialization order dependencies → save as a gotcha
 4. When completing a multi-step process → save as a playbook
-5. When an agent reports important findings → have them save it or save it yourself
+5. When an agent reports important findings → save it for the team
 
 ## INBOX & MESSAGING
 
-You have an inbox for receiving messages from agents. Check your inbox regularly, especially:
-- At the start of a session
+Check your inbox regularly to stay on top of agent communications:
+- At the start of each session
 - After spawning agents
-- When agents complete their work
+- Periodically during work
 
-**inbox**: Check your inbox for messages. Use unreadOnly=true to see only unread messages.
-**read_message**: Read a specific message by ID. Automatically marks it as read.
-**reply_to_message**: Reply to a message from an agent.
-**mark_message_read**: Mark a message as read without reading full content.
-**archive_message**: Archive a message after processing it (moves from inbox to archive).
-**archived_messages**: View previously archived messages.
+**inbox**: Check for messages. Use unreadOnly=true to see only unread messages.
+**read_message**: Read a specific message by ID.
+**reply_to_message**: Reply to agents with guidance or decisions.
+**archive_message**: Archive processed messages.
 
 When you receive a message:
 1. Read it using read_message
-2. Take appropriate action based on the content
-3. Archive the message using archive_message to keep your inbox organized
+2. Determine if it needs a reply:
+   - **Reply to**: Questions, blockers, requests for guidance, design decisions
+   - **Don't reply to**: Completion reports, progress updates, status notifications
+3. Take action if needed: unblock agents, make decisions, adjust priorities
+4. **ALWAYS archive the message** using archive_message - even if you didn't reply
+
+**IMPORTANT**:
+- Agents send completion reports when they finish their work and become idle. These are informational only - acknowledge them internally (e.g., move work item to done, destroy the agent) but DON'T send a reply message. The agent is idle and doesn't need a response.
+- **ALWAYS archive messages after reading them**, regardless of whether you replied or not. An unarchived inbox creates clutter.
+
+## STAKEHOLDER COMMUNICATION
+
+Use report_to_user to keep the user informed:
+- **progress**: "3 agents working on feature X. 2 items complete, 1 in progress."
+- **complete**: "Feature X implementation complete. All tests passing."
+- **question**: Ask for clarification when requirements are unclear
+- **error**: Report blockers that need user intervention
+
+## ARCHITECTURAL DECISION MAKING
+
+When agents need architectural guidance:
+1. Consider the existing patterns in the codebase
+2. Consult relevant ADRs in docs/features/
+3. Make a decision and communicate it to the agent
+4. If it's a significant decision, record it using memory_save_fact
 
 You're working in the codebase at: {workingDirectory}
 `;
 
 /**
- * OrchestratorAgent is a Claude-powered coordinator that analyzes tasks and spawns specialist agents.
+ * OrchestratorAgent is a Team Manager that coordinates a multi-agent software development team.
  *
- * Responsibilities:
- * - Analyzes incoming tasks from the user
- * - Plans work breakdown and spawns specialist agents
- * - Coordinates handoffs between agents
- * - Monitors progress and adjusts as needed
- * - Reports results back to the user
+ * ## Team Manager Persona
  *
- * Special tools available:
- * - spawn_agent: Create a new specialist agent
+ * The orchestrator embodies a "Team Manager" responsible for:
+ * - Efficient delivery and execution of planned work
+ * - Overseeing high-level architecture decisions
+ * - Product management and stakeholder alignment
+ * - Ensuring alignment with broader product vision and goals
+ *
+ * ## Key Responsibilities
+ *
+ * 1. **Delivery Execution**
+ *    - Proactively checks Kanban board for unassigned work items
+ *    - Spawns agents concurrently for multiple items (not sequentially)
+ *    - Monitors work in progress and ensures throughput
+ *
+ * 2. **Team Coordination**
+ *    - Assigns specialists to tasks based on required skills
+ *    - Balances workload across available agent capacity
+ *    - Facilitates communication between agents
+ *    - Removes blockers when agents get stuck
+ *
+ * 3. **Architecture Oversight**
+ *    - Makes architectural decisions when agents need guidance
+ *    - Ensures consistency across the codebase
+ *    - Reviews high-level design before implementation
+ *
+ * 4. **Product Alignment**
+ *    - Understands product vision from features and ADRs
+ *    - Prioritizes work based on business value
+ *    - Communicates progress to stakeholders (the user)
+ *
+ * ## Special Tools Available
+ *
+ * Agent Management:
+ * - spawn_agent: Create a specialist agent (with auto-assignment via workItemId)
  * - destroy_agent: Shut down an agent that's done
  * - message_agent: Send instructions to a running agent
  * - get_agent_status: Check status of all agents
- * - report_to_user: Send updates to the user
  *
- * Events emitted:
+ * Work Item Management:
+ * - create_workitem: Create a User Story on the Kanban board
+ * - list_workitems: View all work items (optionally filter by status)
+ * - assign_workitem: Assign an agent to a work item
+ * - move_workitem: Move work item between columns
+ * - get_unassigned_todo_items: Find items ready for agent assignment
+ * - spawn_agents_for_items: Spawn agents for multiple items concurrently (with automatic rollback)
+ * - get_team_status: Get comprehensive team status including validation checks
+ * - validate_agent_assignments: Validate and optionally fix agent-to-workitem assignment mismatches
+ *
+ * Communication:
+ * - report_to_user: Send updates to the user
+ * - inbox/read_message/reply_to_message: Agent messaging
+ *
+ * ## Events Emitted
+ *
  * - statusChanged: When orchestrator status changes ("idle" | "processing" | "error")
  * - message: When a new message is added to the conversation
  * - agentSpawned: When a new agent is spawned
@@ -339,6 +514,11 @@ export class OrchestratorAgent extends EventEmitter {
         'mcp__orchestrator-tools__list_workitems',
         'mcp__orchestrator-tools__assign_workitem',
         'mcp__orchestrator-tools__move_workitem',
+        // Team Manager proactive tools
+        'mcp__orchestrator-tools__get_unassigned_todo_items',
+        'mcp__orchestrator-tools__spawn_agents_for_items',
+        'mcp__orchestrator-tools__get_team_status',
+        'mcp__orchestrator-tools__validate_agent_assignments',
         // Memory & Learning
         'mcp__orchestrator-tools__memory_search_playbooks',
         'mcp__orchestrator-tools__memory_get_playbook',
@@ -486,9 +666,9 @@ export class OrchestratorAgent extends EventEmitter {
     return [
       tool(
         "spawn_agent",
-        "Create a new specialist agent to work on a specific part of the task. Optionally assign a User Story.",
+        "Create a new specialist agent to work on a specific part of the task. Agent names are automatically made unique using format <descriptive>-<random> (e.g., 'reviewer-guacamole'). Optionally assign a User Story. Includes automatic verification and rollback on failure.",
         {
-          name: z.string().describe("Unique name for this agent (e.g., 'R6Parser', 'ApiRefactor')"),
+          name: z.string().describe("Descriptive name for this agent (e.g., 'reviewer', 'developer', 'architect'). Will be made unique automatically."),
           role: z.string().describe("What this agent specializes in (e.g., 'Core Parser Engineer')"),
           focus: z.string().describe("Specific task this agent should accomplish"),
           systemPrompt: z.string().optional().describe("Detailed instructions for the agent (optional)"),
@@ -497,33 +677,90 @@ export class OrchestratorAgent extends EventEmitter {
           workItemId: z.string().optional().describe("User Story ID to assign to this agent (auto-assigns and moves to 'doing')"),
         },
         async (args) => {
-          // If workItemId provided, assign and move to doing
-          if (args.workItemId) {
-            const { getWorkItemManager } = await import("../kanban");
-            const workItemManager = getWorkItemManager();
-            await workItemManager.updateItem(args.workItemId, { assignee: args.name });
-            await workItemManager.moveItem(args.workItemId, 'doing');
-            this.outputChannel.appendLine(`Assigned User Story ${args.workItemId} to ${args.name} and moved to doing`);
+          let workItemAssigned = false;
+          let workItemMoved = false;
+
+          try {
+            // Generate unique agent name
+            const agentStatus = this.agentPool.getStatus();
+            const existingNames = new Set([
+              ...agentStatus.activeAgents.map(a => a.name),
+              ...agentStatus.pendingAgents,
+            ]);
+            const uniqueName = generateUniqueAgentName(args.name, existingNames);
+
+            // Log if name was changed
+            if (uniqueName !== args.name) {
+              this.outputChannel.appendLine(`Generated unique name: ${uniqueName} (from ${args.name})`);
+            }
+            // If workItemId provided, assign and move to doing
+            if (args.workItemId) {
+              const { getWorkItemManager } = await import("../kanban");
+              const workItemManager = getWorkItemManager();
+
+              await workItemManager.updateItem(args.workItemId, { assignee: uniqueName });
+              workItemAssigned = true;
+
+              await workItemManager.moveItem(args.workItemId, 'doing');
+              workItemMoved = true;
+
+              this.outputChannel.appendLine(`Assigned User Story ${args.workItemId} to ${uniqueName} and moved to doing`);
+            }
+
+            // Spawn the agent with the unique name
+            await this.agentPool.spawnAgent({
+              name: uniqueName,
+              role: args.role,
+              focus: args.focus,
+              systemPrompt: args.systemPrompt ?? `You are a ${args.role}. Your focus: ${args.focus}`,
+              waitFor: args.waitFor ?? [],
+              priority: args.priority ?? 0,
+              workingDirectory: this.getWorkingDirectory(),
+              workItemId: args.workItemId,
+            });
+
+            // Verify agent was created
+            const updatedAgentStatus = this.agentPool.getStatus();
+            const agentExists = updatedAgentStatus.activeAgents.some((a: any) => a.name === uniqueName) ||
+                               updatedAgentStatus.pendingAgents.some((a: any) => a.name === uniqueName);
+
+            if (!agentExists) {
+              throw new Error(`Agent ${uniqueName} was not found in agent pool after spawning`);
+            }
+
+            this.emit("agentSpawned", uniqueName);
+            const storyInfo = args.workItemId ? ` (assigned to ${args.workItemId})` : '';
+            vscode.window.showInformationMessage(`Spawned agent: ${uniqueName} (${args.role})${storyInfo}`);
+
+            return {
+              content: [{ type: "text", text: `Successfully spawned agent: ${uniqueName}${storyInfo}` }],
+            };
+          } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+
+            // Rollback work item assignment if agent creation failed
+            if (args.workItemId && (workItemAssigned || workItemMoved)) {
+              try {
+                const { getWorkItemManager } = await import("../kanban");
+                const workItemManager = getWorkItemManager();
+                await workItemManager.moveItem(args.workItemId, 'todo');
+                await workItemManager.updateItem(args.workItemId, { assignee: undefined });
+                this.outputChannel.appendLine(`Rolled back work item ${args.workItemId} to todo (agent spawn failed)`);
+              } catch (rollbackError) {
+                const rollbackMsg = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+                this.outputChannel.appendLine(`Failed to rollback ${args.workItemId}: ${rollbackMsg}`);
+              }
+            }
+
+            // Re-throw the error with the unique name we attempted to use
+            const agentStatus = this.agentPool.getStatus();
+            const existingNames = new Set([
+              ...agentStatus.activeAgents.map(a => a.name),
+              ...agentStatus.pendingAgents,
+            ]);
+            const attemptedName = generateUniqueAgentName(args.name, existingNames);
+            throw new Error(`Failed to spawn agent ${attemptedName}: ${errorMsg}`);
           }
-
-          await this.agentPool.spawnAgent({
-            name: args.name,
-            role: args.role,
-            focus: args.focus,
-            systemPrompt: args.systemPrompt ?? `You are a ${args.role}. Your focus: ${args.focus}`,
-            waitFor: args.waitFor ?? [],
-            priority: args.priority ?? 0,
-            workingDirectory: this.getWorkingDirectory(),
-            workItemId: args.workItemId,
-          });
-
-          this.emit("agentSpawned", args.name);
-          const storyInfo = args.workItemId ? ` (assigned to ${args.workItemId})` : '';
-          vscode.window.showInformationMessage(`Spawned agent: ${args.name} (${args.role})${storyInfo}`);
-
-          return {
-            content: [{ type: "text", text: `Successfully spawned agent: ${args.name}${storyInfo}` }],
-          };
         }
       ),
       tool(
@@ -609,7 +846,7 @@ export class OrchestratorAgent extends EventEmitter {
           description: z.string().describe("Detailed description of the work to be done"),
           priority: z.enum(["critical", "high", "medium", "low"]).optional().describe("Priority level (default: medium)"),
           tags: z.array(z.string()).optional().describe("Tags for categorization"),
-          estimatedHours: z.number().optional().describe("Estimated hours to complete"),
+          estimatedHours: z.number().optional().describe("Estimated AGENT HOURS to complete (not human hours). Consider how long an AI agent will take."),
           featureRef: z.string().optional().describe("Reference to parent feature folder (e.g., 'docs/features/kanban-workitems'). Use when implementing ADR/investigation features."),
         },
         async (args) => {
@@ -696,6 +933,389 @@ export class OrchestratorAgent extends EventEmitter {
 
           return {
             content: [{ type: "text", text: `Moved User Story ${args.itemId} to ${args.status}` }],
+          };
+        }
+      ),
+      tool(
+        "get_unassigned_todo_items",
+        "Get all unassigned User Stories in the 'todo' column. Use this to find work that needs agents assigned. As a Team Manager, you should proactively check for and assign unassigned work.",
+        {},
+        async () => {
+          const { getWorkItemManager } = await import("../kanban");
+          const workItemManager = getWorkItemManager();
+
+          const todoItems = await workItemManager.listItems('todo');
+          const unassigned = todoItems.filter((item: any) => !item.assignee);
+
+          if (unassigned.length === 0) {
+            return {
+              content: [{ type: "text", text: "No unassigned items in todo column. All work is either assigned or completed." }],
+            };
+          }
+
+          const summary = unassigned.map((item: any) => {
+            const feature = item.featureRef ? ` [Feature: ${item.featureRef}]` : '';
+            const estimate = item.estimatedHours ? ` (Est: ${item.estimatedHours}h)` : '';
+            return `- ${item.id}: ${item.title} (Priority: ${item.priority})${estimate}${feature}`;
+          }).join('\n');
+
+          this.outputChannel.appendLine(`Found ${unassigned.length} unassigned todo items`);
+
+          return {
+            content: [{
+              type: "text",
+              text: `Found ${unassigned.length} unassigned item(s) ready for work:\n${summary}\n\nAs Team Manager, spawn agents for these items to maximize parallel work.`
+            }],
+          };
+        }
+      ),
+      tool(
+        "spawn_agents_for_items",
+        "Spawn specialist agents for multiple work items concurrently. Agent names are automatically made unique using format <descriptive>-<random>. This is the preferred way to assign work as a Team Manager - get multiple agents working in parallel.",
+        {
+          assignments: z.array(z.object({
+            workItemId: z.string().describe("The User Story ID"),
+            agentName: z.string().describe("Descriptive name for the agent (e.g., 'developer', 'tester'). Will be made unique automatically."),
+            role: z.string().describe("Agent's role (e.g., 'Backend Engineer', 'Frontend Engineer')"),
+            focus: z.string().describe("Specific focus/task for this agent"),
+          })).describe("List of work item to agent assignments"),
+        },
+        async (args) => {
+          const { getWorkItemManager } = await import("../kanban");
+          const workItemManager = getWorkItemManager();
+
+          const results: string[] = [];
+          const errors: string[] = [];
+          const rollbacks: Array<{ workItemId: string; agentName: string }> = [];
+
+          // Generate unique names for all agents first
+          const agentStatus = this.agentPool.getStatus();
+          const existingNames = new Set([
+            ...agentStatus.activeAgents.map(a => a.name),
+            ...agentStatus.pendingAgents,
+          ]);
+
+          // Map original names to unique names
+          const nameMapping = new Map<string, string>();
+          for (const assignment of args.assignments) {
+            const uniqueName = generateUniqueAgentName(assignment.agentName, existingNames);
+            nameMapping.set(assignment.agentName, uniqueName);
+            existingNames.add(uniqueName); // Add to set to avoid duplicates within this batch
+            if (uniqueName !== assignment.agentName) {
+              this.outputChannel.appendLine(`Generated unique name: ${uniqueName} (from ${assignment.agentName})`);
+            }
+          }
+
+          // Get max concurrent agents limit
+          const config = vscode.workspace.getConfiguration("multiAgent");
+          const maxAgents = config.get<number>("maxConcurrentAgents") ?? 5;
+          const currentAgents = this.agentPool.getStatus().activeAgents.length;
+          const availableSlots = maxAgents - currentAgents;
+
+          if (availableSlots <= 0) {
+            return {
+              content: [{
+                type: "text",
+                text: `Cannot spawn agents: Maximum concurrent agents (${maxAgents}) already reached. Wait for agents to complete or increase the limit.`
+              }],
+            };
+          }
+
+          // Limit assignments to available slots
+          const assignmentsToProcess = args.assignments.slice(0, availableSlots);
+          if (assignmentsToProcess.length < args.assignments.length) {
+            results.push(`Note: Only spawning ${assignmentsToProcess.length} of ${args.assignments.length} agents due to concurrency limit (${maxAgents}).`);
+          }
+
+          // Spawn agents concurrently using Promise.allSettled
+          const spawnPromises = assignmentsToProcess.map(async (assignment) => {
+            let workItemAssigned = false;
+            let workItemMoved = false;
+            const uniqueName = nameMapping.get(assignment.agentName)!;
+
+            try {
+              // Step 1: Assign work item with unique name
+              await workItemManager.updateItem(assignment.workItemId, { assignee: uniqueName });
+              workItemAssigned = true;
+
+              // Step 2: Move to doing
+              await workItemManager.moveItem(assignment.workItemId, 'doing');
+              workItemMoved = true;
+
+              // Step 3: Spawn the agent with unique name
+              await this.agentPool.spawnAgent({
+                name: uniqueName,
+                role: assignment.role,
+                focus: assignment.focus,
+                systemPrompt: `You are a ${assignment.role}. Your focus: ${assignment.focus}`,
+                waitFor: [],
+                priority: 0,
+                workingDirectory: this.getWorkingDirectory(),
+                workItemId: assignment.workItemId,
+              });
+
+              // Step 4: Verify agent was created
+              const updatedAgentStatus = this.agentPool.getStatus();
+              const agentExists = updatedAgentStatus.activeAgents.some((a: any) => a.name === uniqueName) ||
+                                 updatedAgentStatus.pendingAgents.some((a: any) => a.name === uniqueName);
+
+              if (!agentExists) {
+                throw new Error(`Agent ${uniqueName} was not found in agent pool after spawning`);
+              }
+
+              this.emit("agentSpawned", uniqueName);
+              return { success: true, agentName: uniqueName, workItemId: assignment.workItemId };
+            } catch (error) {
+              const errorMsg = error instanceof Error ? error.message : String(error);
+
+              // Rollback work item assignment if agent creation failed
+              if (workItemAssigned || workItemMoved) {
+                try {
+                  // Move back to todo and clear assignee
+                  await workItemManager.moveItem(assignment.workItemId, 'todo');
+                  await workItemManager.updateItem(assignment.workItemId, { assignee: undefined });
+                  rollbacks.push({ workItemId: assignment.workItemId, agentName: uniqueName });
+                } catch (rollbackError) {
+                  const rollbackMsg = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+                  this.outputChannel.appendLine(`Failed to rollback ${assignment.workItemId}: ${rollbackMsg}`);
+                }
+              }
+
+              return { success: false, agentName: uniqueName, workItemId: assignment.workItemId, error: errorMsg };
+            }
+          });
+
+          const spawnResults = await Promise.allSettled(spawnPromises);
+
+          for (const result of spawnResults) {
+            if (result.status === 'fulfilled') {
+              const r = result.value;
+              if (r.success) {
+                results.push(`Spawned ${r.agentName} for ${r.workItemId}`);
+              } else {
+                errors.push(`Failed to spawn ${r.agentName} for ${r.workItemId}: ${r.error}`);
+              }
+            } else {
+              errors.push(`Unexpected error: ${result.reason}`);
+            }
+          }
+
+          const successCount = results.filter(r => r.startsWith('Spawned')).length;
+          const summary = [
+            `Team Manager spawned ${successCount} agent(s) concurrently.`,
+            '',
+            'Results:',
+            ...results,
+            ...(errors.length > 0 ? ['', 'Errors:', ...errors] : []),
+            ...(rollbacks.length > 0 ? ['', 'Rollbacks (moved back to todo):', ...rollbacks.map(r => `- ${r.workItemId} (agent: ${r.agentName})`)] : []),
+          ].join('\n');
+
+          this.outputChannel.appendLine(summary);
+
+          return {
+            content: [{ type: "text", text: summary }],
+          };
+        }
+      ),
+      tool(
+        "get_team_status",
+        "Get comprehensive status of the team including agents, work items, and capacity. Use this to understand current team state and identify bottlenecks.",
+        {},
+        async () => {
+          const { getWorkItemManager } = await import("../kanban");
+          const workItemManager = getWorkItemManager();
+
+          // Get agent status
+          const agentStatus = this.agentPool.getStatus();
+
+          // Get work item counts by status
+          const allItems = await workItemManager.listItems();
+          const itemsByStatus = {
+            todo: allItems.filter((i: any) => i.status === 'todo'),
+            doing: allItems.filter((i: any) => i.status === 'doing'),
+            'code-review': allItems.filter((i: any) => i.status === 'code-review'),
+            done: allItems.filter((i: any) => i.status === 'done'),
+          };
+
+          const unassignedTodo = itemsByStatus.todo.filter((i: any) => !i.assignee);
+
+          // Check for orphaned work items (assigned but no active agent)
+          const activeAgentNames = new Set([
+            ...agentStatus.activeAgents.map((a: any) => a.name),
+            ...agentStatus.pendingAgents.map((a: any) => a.name)
+          ]);
+
+          const orphanedItems = itemsByStatus.doing.filter((i: any) =>
+            i.assignee && !activeAgentNames.has(i.assignee)
+          );
+
+          // Note: We can't easily detect "idle" agents (agents that completed work but still running)
+          // because workItemId isn't stored in agent status. This would require updating AgentSession.
+          const idleAgents: any[] = [];
+
+          // Get capacity info
+          const config = vscode.workspace.getConfiguration("multiAgent");
+          const maxAgents = config.get<number>("maxConcurrentAgents") ?? 5;
+          const availableSlots = maxAgents - agentStatus.activeAgents.length;
+
+          const summary = [
+            '## Team Status Report',
+            '',
+            '### Capacity',
+            `- Active Agents: ${agentStatus.activeAgents.length}/${maxAgents}`,
+            `- Available Slots: ${availableSlots}`,
+            `- Pending Agents: ${agentStatus.pendingAgents.length}`,
+            `- Total Cost: $${agentStatus.totalCost.toFixed(4)}`,
+            '',
+            '### Kanban Board',
+            `- Todo: ${itemsByStatus.todo.length} (${unassignedTodo.length} unassigned)`,
+            `- Doing: ${itemsByStatus.doing.length}`,
+            `- Code Review: ${itemsByStatus['code-review'].length}`,
+            `- Done: ${itemsByStatus.done.length}`,
+            '',
+            '### Active Agents',
+            ...(agentStatus.activeAgents.length > 0
+              ? agentStatus.activeAgents.map((a: any) => `- ${a.name} (${a.role}): ${a.status} - ${a.focus}`)
+              : ['- No active agents']),
+            '',
+            '### Validation Status',
+            ...(orphanedItems.length > 0
+              ? [`- WARNING: ${orphanedItems.length} orphaned work item(s) (assigned but no active agent)`, ...orphanedItems.map((i: any) => `  - ${i.id}: ${i.title} (assigned to: ${i.assignee})`)]
+              : ['- No orphaned work items detected']),
+            ...(idleAgents.length > 0
+              ? [`- WARNING: ${idleAgents.length} idle agent(s) (active but no assigned work item)`, ...idleAgents.map((a: any) => `  - ${a.name} (workItemId: ${a.workItemId})`)]
+              : ['- No idle agents detected']),
+            '',
+            '### Recommendations',
+            ...(orphanedItems.length > 0
+              ? ['- Run validate_agent_assignments with autofix=true to resolve orphaned items']
+              : []),
+            ...(unassignedTodo.length > 0 && availableSlots > 0
+              ? [`- ${unassignedTodo.length} unassigned item(s) can be picked up. Spawn agents!`]
+              : []),
+            ...(availableSlots === 0 && unassignedTodo.length > 0
+              ? ['- At capacity. Wait for agents to complete or increase limit.']
+              : []),
+            ...(itemsByStatus['code-review'].length > 0
+              ? [`- ${itemsByStatus['code-review'].length} item(s) awaiting code review.`]
+              : []),
+            ...(unassignedTodo.length === 0 && agentStatus.activeAgents.length === 0
+              ? ['- No pending work and no active agents. Team is idle.']
+              : []),
+          ].join('\n');
+
+          this.outputChannel.appendLine('Generated team status report');
+
+          return {
+            content: [{ type: "text", text: summary }],
+          };
+        }
+      ),
+      tool(
+        "validate_agent_assignments",
+        "Validate synchronization between active agents and assigned work items. Detects orphaned work items (assigned but no active agent) and idle agents (active but no assigned work item). Can optionally auto-fix issues by moving orphaned items back to 'todo'.",
+        {
+          autofix: z.boolean().optional().describe("If true, automatically move orphaned items back to 'todo' and clear assignee (default: false)"),
+        },
+        async (args) => {
+          const { getWorkItemManager } = await import("../kanban");
+          const workItemManager = getWorkItemManager();
+
+          // Get agent status
+          const agentStatus = this.agentPool.getStatus();
+
+          // Get all work items in "doing" status
+          const doingItems = await workItemManager.listItems('doing');
+
+          // Build set of active agent names
+          const activeAgentNames = new Set([
+            ...agentStatus.activeAgents.map((a: any) => a.name),
+            ...agentStatus.pendingAgents.map((a: any) => a.name)
+          ]);
+
+          // Find orphaned work items (assigned but no corresponding agent)
+          const orphanedItems = doingItems.filter((i: any) =>
+            i.assignee && !activeAgentNames.has(i.assignee)
+          );
+
+          // Note: We can't easily detect "idle" agents (agents that completed work but still running)
+          // because workItemId isn't stored in agent status. This would require updating AgentSession.
+          const idleAgents: any[] = [];
+          const unassignedAgents: any[] = [];
+
+          const issues: string[] = [];
+          const fixes: string[] = [];
+
+          // Report orphaned items
+          if (orphanedItems.length > 0) {
+            issues.push(`Found ${orphanedItems.length} orphaned work item(s):`);
+            for (const item of orphanedItems) {
+              issues.push(`  - ${item.id}: "${item.title}" (assigned to: ${item.assignee})`);
+
+              if (args.autofix) {
+                try {
+                  // Move back to todo and clear assignee
+                  await workItemManager.moveItem(item.id, 'todo');
+                  await workItemManager.updateItem(item.id, { assignee: undefined });
+                  fixes.push(`  - Fixed ${item.id}: moved to 'todo' and cleared assignee`);
+                } catch (error) {
+                  const errorMsg = error instanceof Error ? error.message : String(error);
+                  fixes.push(`  - ERROR fixing ${item.id}: ${errorMsg}`);
+                }
+              }
+            }
+          }
+
+          // Report idle agents
+          if (idleAgents.length > 0) {
+            issues.push(`Found ${idleAgents.length} idle agent(s) (active but work item not in 'doing'):`);
+            for (const agent of idleAgents) {
+              issues.push(`  - ${agent.name}: workItemId=${agent.workItemId} (not found in 'doing')`);
+            }
+            issues.push(`  Note: These agents may have completed their work. Consider destroying them.`);
+          }
+
+          // Report unassigned agents (may be legitimate for some workflows)
+          if (unassignedAgents.length > 0) {
+            issues.push(`Found ${unassignedAgents.length} agent(s) without assigned work items:`);
+            for (const agent of unassignedAgents) {
+              issues.push(`  - ${agent.name} (${agent.role})`);
+            }
+            issues.push(`  Note: This may be intentional for coordination/review agents.`);
+          }
+
+          // Build summary
+          const summary = [];
+          summary.push('## Agent Assignment Validation Report');
+          summary.push('');
+
+          if (issues.length === 0) {
+            summary.push('Status: All agent assignments are synchronized.');
+            summary.push(`- ${agentStatus.activeAgents.length + agentStatus.pendingAgents.length} active/pending agents`);
+            summary.push(`- ${doingItems.length} work items in 'doing'`);
+            summary.push('- No mismatches detected');
+          } else {
+            summary.push('Status: Issues detected');
+            summary.push('');
+            summary.push(...issues);
+
+            if (args.autofix && fixes.length > 0) {
+              summary.push('');
+              summary.push('Auto-fix Results:');
+              summary.push(...fixes);
+            }
+
+            if (!args.autofix && orphanedItems.length > 0) {
+              summary.push('');
+              summary.push('Recommendation: Run validate_agent_assignments with autofix=true to automatically resolve orphaned items.');
+            }
+          }
+
+          const summaryText = summary.join('\n');
+          this.outputChannel.appendLine(summaryText);
+
+          return {
+            content: [{ type: "text", text: summaryText }],
           };
         }
       ),
@@ -824,8 +1444,16 @@ export class OrchestratorAgent extends EventEmitter {
    * Spawn a code reviewer agent for a work item that has moved to code-review
    */
   private async spawnReviewerForItem(item: any): Promise<void> {
+    // Generate unique reviewer name
+    const agentStatus = this.agentPool.getStatus();
+    const existingNames = new Set([
+      ...agentStatus.activeAgents.map(a => a.name),
+      ...agentStatus.pendingAgents,
+    ]);
+    const uniqueReviewerName = generateUniqueAgentName(`reviewer-${item.id}`, existingNames);
+
     const reviewer = await this.agentPool.spawnAgent({
-      name: `${item.id}-Reviewer`,
+      name: uniqueReviewerName,
       role: 'Code Reviewer',
       focus: `Review: ${item.title}`,
       systemPrompt: `You are a code reviewer. Review the changes for work item ${item.id}: "${item.title}".

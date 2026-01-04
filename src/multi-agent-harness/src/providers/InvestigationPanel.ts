@@ -206,19 +206,42 @@ export class InvestigationPanel {
       const content = await vscode.workspace.fs.readFile(vscode.Uri.file(message.filePath));
       const contentStr = Buffer.from(content).toString('utf-8');
 
+      // Extract feature name from path: .clautana/features/{featureName}/investigations/...
+      // or .clautana/features/{featureName}/specs/...
+      const pathParts = message.filePath.split(/[/\\]/);
+      const featuresIndex = pathParts.findIndex(part => part === 'features');
+      const featureName = featuresIndex >= 0 && featuresIndex + 1 < pathParts.length
+        ? pathParts[featuresIndex + 1]
+        : 'unknown';
+
       console.log('[InvestigationPanel] Sending task to orchestrator...');
+      console.log('[InvestigationPanel] Feature name:', featureName);
+
       // Send a task to the orchestrator to split into tasks
       await orchestrator.handleUserTask(
-        `Read the investigation/spec at ${message.filePath} and split it into actionable tasks on the Kanban board. Create work items for each task.\n\nContent:\n${contentStr}`
+        `Read the investigation/spec at ${message.filePath} and split it into actionable tasks on the Kanban board. Create work items for each task.
+
+IMPORTANT: When creating work items, set the featureRef to "${featureName}" (NOT "investigations" or "specs" - use the parent feature name).
+
+Content:
+${contentStr}`
       );
 
       console.log('[InvestigationPanel] Task sent successfully');
 
       // Update the investigation status to "Planned"
-      const updatedContent = contentStr.replace(
-        /## Status: (Exploring|Viable)/,
-        '## Status: Planned'
+      // Match both formats: "## Status: X" and "**Status:** X"
+      let updatedContent = contentStr.replace(
+        /\*\*Status:\*\*\s*(In Progress|Exploring|Viable)/i,
+        '**Status:** Planned'
       );
+      // Also try the heading format
+      if (updatedContent === contentStr) {
+        updatedContent = contentStr.replace(
+          /##\s*Status:\s*(Exploring|Viable)/i,
+          '## Status: Planned'
+        );
+      }
       await vscode.workspace.fs.writeFile(
         vscode.Uri.file(message.filePath),
         Buffer.from(updatedContent, 'utf-8')

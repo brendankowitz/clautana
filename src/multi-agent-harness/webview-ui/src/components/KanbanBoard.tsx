@@ -82,6 +82,13 @@ export function KanbanBoard() {
   const [assigningItemIds, setAssigningItemIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
+  // Filters
+  const [searchText, setSearchText] = useState<string>("");
+  const [filterPriority, setFilterPriority] = useState<WorkItemPriority | "">("");
+  const [filterFeature, setFilterFeature] = useState<string>("");
+  const [filterTags, setFilterTags] = useState<string[]>([]);
+  const [showTagsDropdown, setShowTagsDropdown] = useState<boolean>(false);
+
   useEffect(() => {
     // Request initial state
     vscode.postMessage({ type: "getState" });
@@ -101,7 +108,23 @@ export function KanbanBoard() {
           break;
 
         case "itemMoved":
+          console.log('[KanbanBoard] Received itemMoved message:', message.item.id, 'new status:', message.item.status);
+          setItems((prev) => {
+            const updated = prev.map((item) =>
+              item.id === message.item.id ? message.item : item
+            );
+            console.log('[KanbanBoard] Items after update:', updated.map(i => `${i.id}:${i.status}`));
+            return updated;
+          });
+          // Clear assigning state when item is updated
+          setAssigningItemIds((prev) => {
+            const next = new Set(prev);
+            next.delete(message.item.id);
+            return next;
+          });
+          break;
         case "itemUpdated":
+          console.log('[KanbanBoard] Received itemUpdated message:', message.item.id, 'status:', message.item.status);
           setItems((prev) =>
             prev.map((item) =>
               item.id === message.item.id ? message.item : item
@@ -246,8 +269,71 @@ export function KanbanBoard() {
   );
 
   // Filter out cancelled items from the main board
-  const activeItems = items.filter((item) => item.status !== "cancelled");
-  const cancelledItems = items.filter((item) => item.status === "cancelled");
+  // Apply filters
+  const filteredItems = items.filter((item) => {
+    // Text search (searches title, description, id)
+    if (searchText) {
+      const search = searchText.toLowerCase();
+      const matchesText =
+        item.title.toLowerCase().includes(search) ||
+        item.description.toLowerCase().includes(search) ||
+        item.id.toLowerCase().includes(search) ||
+        item.assignee?.toLowerCase().includes(search) ||
+        false;
+      if (!matchesText) return false;
+    }
+
+    // Priority filter
+    if (filterPriority && item.priority !== filterPriority) {
+      return false;
+    }
+
+    // Feature filter
+    if (filterFeature) {
+      if (!item.featureRef || !item.featureRef.includes(filterFeature)) {
+        return false;
+      }
+    }
+
+    // Tags filter (item must have ALL selected tags)
+    if (filterTags.length > 0) {
+      const hasAllTags = filterTags.every(tag => item.tags.includes(tag));
+      if (!hasAllTags) return false;
+    }
+
+    return true;
+  });
+
+  const activeItems = filteredItems.filter((item) => item.status !== "cancelled");
+  const cancelledItems = filteredItems.filter((item) => item.status === "cancelled");
+
+  // Get unique features and tags for filter dropdowns
+  const allFeatures = Array.from(
+    new Set(
+      items
+        .map((item) => item.featureRef)
+        .filter((ref): ref is string => !!ref)
+    )
+  ).sort();
+
+  const allTags = Array.from(
+    new Set(items.flatMap((item) => item.tags))
+  ).sort();
+
+  // Clear filters function
+  const clearFilters = () => {
+    setSearchText("");
+    setFilterPriority("");
+    setFilterFeature("");
+    setFilterTags([]);
+  };
+
+  // Check if any filters are active
+  const hasActiveFilters =
+    searchText !== "" ||
+    filterPriority !== "" ||
+    filterFeature !== "" ||
+    filterTags.length > 0;
 
   // Map transient todo status to work item status for column placement
   const getTransientTodosForColumn = (columnStatus: WorkItemStatus): TransientTodo[] => {
@@ -303,6 +389,89 @@ export function KanbanBoard() {
             </span>
           )}
         </div>
+      </div>
+
+      <div className="kanban-filters">
+        <input
+          type="text"
+          className="filter-search"
+          placeholder="Search stories..."
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          aria-label="Search stories"
+        />
+
+        <select
+          className="filter-select"
+          value={filterPriority}
+          onChange={(e) => setFilterPriority(e.target.value as WorkItemPriority | "")}
+          aria-label="Filter by priority"
+        >
+          <option value="">All Priorities</option>
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+
+        {allFeatures.length > 0 && (
+          <select
+            className="filter-select"
+            value={filterFeature}
+            onChange={(e) => setFilterFeature(e.target.value)}
+            aria-label="Filter by feature"
+          >
+            <option value="">All Features</option>
+            {allFeatures.map((feature) => (
+              <option key={feature} value={feature}>
+                {feature.split('/').pop()}
+              </option>
+            ))}
+          </select>
+        )}
+
+        {allTags.length > 0 && (
+          <div className="filter-tags-container">
+            <button
+              className="filter-tags-button"
+              onClick={() => setShowTagsDropdown(!showTagsDropdown)}
+              aria-label="Filter by tags"
+            >
+              Tags {filterTags.length > 0 && `(${filterTags.length})`}
+            </button>
+            {showTagsDropdown && (
+              <div className="filter-tags-dropdown">
+                {allTags.map((tag) => (
+                  <label key={tag} className="filter-tag-option">
+                    <input
+                      type="checkbox"
+                      checked={filterTags.includes(tag)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setFilterTags([...filterTags, tag]);
+                        } else {
+                          setFilterTags(filterTags.filter(t => t !== tag));
+                        }
+                      }}
+                    />
+                    <span>{tag}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {hasActiveFilters && (
+          <button
+            className="filter-clear"
+            onClick={clearFilters}
+            aria-label="Clear all filters"
+            title="Clear all filters"
+          >
+            Clear Filters
+          </button>
+        )}
       </div>
 
       <div className="kanban-board">

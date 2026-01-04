@@ -97,11 +97,13 @@ export class KanbanPanel {
       });
 
       const itemMovedHandler = (item: any, oldStatus: any) => {
+        console.log('[KanbanPanel] Item moved event:', item.id, 'from', oldStatus, 'to', item.status);
         this.postMessage({
           type: "itemMoved",
           item: this.serializeWorkItem(item as WorkItem),
           oldStatus,
         });
+        console.log('[KanbanPanel] Posted itemMoved message to webview');
       };
       workItemManager.on("itemMoved", itemMovedHandler);
       this.disposables.push({

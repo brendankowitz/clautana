@@ -536,11 +536,8 @@ export function registerCommands(
 
       try {
         await vscode.commands.executeCommand("vscode.open", messagePath);
-
-        // Mark as read when opened
-        if (messagesTreeProvider) {
-          messagesTreeProvider.markAsRead(messageId);
-        }
+        // Note: Message is NOT marked as read automatically - user is just inspecting
+        // Agents must use read_message(messageId) tool to mark messages as read
       } catch (error) {
         vscode.window.showErrorMessage(`Could not open message file: ${error instanceof Error ? error.message : String(error)}`);
       }

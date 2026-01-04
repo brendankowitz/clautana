@@ -54,6 +54,28 @@ interface Feature {
 
 type BrowserItem = Investigation | Spec | ADR;
 
+// Column definitions for each view mode
+const INVESTIGATION_COLUMNS: Array<{ status: InvestigationStatus; displayName: string }> = [
+  { status: 'exploring', displayName: 'Exploring' },
+  { status: 'viable', displayName: 'Viable' },
+  { status: 'planned', displayName: 'Planned' },
+  { status: 'rejected', displayName: 'Rejected' },
+];
+
+const SPEC_COLUMNS: Array<{ status: SpecStatus; displayName: string }> = [
+  { status: 'draft', displayName: 'Draft' },
+  { status: 'review', displayName: 'Review' },
+  { status: 'approved', displayName: 'Approved' },
+  { status: 'implemented', displayName: 'Implemented' },
+];
+
+const ADR_COLUMNS: Array<{ status: ADRStatus; displayName: string }> = [
+  { status: 'proposed', displayName: 'Proposed' },
+  { status: 'accepted', displayName: 'Accepted' },
+  { status: 'rejected', displayName: 'Rejected' },
+  { status: 'superseded', displayName: 'Superseded' },
+];
+
 export function InvestigationBrowser() {
   const vscode = useVsCodeApi();
   const [features, setFeatures] = useState<Feature[]>([]);
@@ -211,6 +233,22 @@ export function InvestigationBrowser() {
 
   const availableViewModes = getAvailableViewModes();
 
+  // Get columns based on view mode
+  const getColumns = () => {
+    switch (viewMode) {
+      case 'investigations':
+        return INVESTIGATION_COLUMNS;
+      case 'specs':
+        return SPEC_COLUMNS;
+      case 'adrs':
+        return ADR_COLUMNS;
+      default:
+        return [];
+    }
+  };
+
+  const columns = getColumns();
+
   return (
     <div className="investigation-app-container">
       {error && (
@@ -278,9 +316,9 @@ export function InvestigationBrowser() {
         )}
       </div>
 
-      <div className="investigation-grid">
-        {viewMode === 'features' ? (
-          features.length === 0 ? (
+      {viewMode === 'features' ? (
+        <div className="investigation-grid">
+          {features.length === 0 ? (
             <div className="empty-state">
               <span className="empty-icon">📁</span>
               <p className="empty-message">No features found</p>
@@ -292,33 +330,32 @@ export function InvestigationBrowser() {
                 key={feature.name}
                 feature={feature}
                 onCreateInvestigation={handleCreateInvestigation}
+                onDoubleClick={() => {
+                  vscode.postMessage({
+                    type: "openItem",
+                    filePath: feature.path,
+                  });
+                }}
               />
             ))
-          )
-        ) : items.length === 0 ? (
-          <div className="empty-state">
-            <span className="empty-icon">📂</span>
-            <p className="empty-message">No {getViewTitle().toLowerCase()} found</p>
-            <p className="empty-hint">
-              {viewMode === 'investigations' && 'Use /fn-investigation to create one'}
-              {viewMode === 'specs' && 'Use /speckit.specify to create one'}
-              {viewMode === 'adrs' && 'Accept viable investigations to create ADRs'}
-            </p>
-          </div>
-        ) : (
-          items.map((item) => (
-            <ItemCard
-              key={item.id}
-              item={item}
+          )}
+        </div>
+      ) : (
+        <div className="investigation-board">
+          {columns.map((column) => (
+            <InvestigationColumn
+              key={column.status}
+              status={column.status}
+              displayName={column.displayName}
+              items={items.filter((item) => item.status === column.status)}
               viewMode={viewMode}
-              workflowMode={workflowMode}
-              onDoubleClick={handleItemDoubleClick}
+              onItemDoubleClick={handleItemDoubleClick}
               onSplitIntoTasks={handleSplitIntoTasks}
               onAcceptToADR={handleAcceptToADR}
             />
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -326,16 +363,17 @@ export function InvestigationBrowser() {
 interface FeatureCardProps {
   feature: Feature;
   onCreateInvestigation: (featureName: string) => void;
+  onDoubleClick?: () => void;
 }
 
-function FeatureCard({ feature, onCreateInvestigation }: FeatureCardProps) {
+function FeatureCard({ feature, onCreateInvestigation, onDoubleClick }: FeatureCardProps) {
   const updated = new Date(feature.updated);
   const updatedStr = updated.toLocaleDateString();
 
   const totalItems = feature.investigations.length + feature.specs.length + feature.adrs.length;
 
   return (
-    <div className="item-card feature-card">
+    <div className="item-card feature-card" onDoubleClick={onDoubleClick}>
       <div className="card-header">
         <span className="card-feature-badge">{feature.name}</span>
         <span className="card-stats">
@@ -383,10 +421,55 @@ function FeatureCard({ feature, onCreateInvestigation }: FeatureCardProps) {
   );
 }
 
+interface InvestigationColumnProps {
+  status: string;
+  displayName: string;
+  items: BrowserItem[];
+  viewMode: BrowserViewMode;
+  onItemDoubleClick: (item: BrowserItem) => void;
+  onSplitIntoTasks: (item: BrowserItem) => void;
+  onAcceptToADR: (item: Investigation) => void;
+}
+
+function InvestigationColumn({
+  displayName,
+  items,
+  viewMode,
+  onItemDoubleClick,
+  onSplitIntoTasks,
+  onAcceptToADR,
+}: InvestigationColumnProps) {
+  return (
+    <div className="investigation-column">
+      <div className="column-header">
+        <h3 className="column-title">{displayName}</h3>
+        <span className="item-count">{items.length}</span>
+      </div>
+      <div className="column-items">
+        {items.length === 0 ? (
+          <div className="column-empty">
+            <span className="empty-text">No items</span>
+          </div>
+        ) : (
+          items.map((item) => (
+            <ItemCard
+              key={item.id}
+              item={item}
+              viewMode={viewMode}
+              onDoubleClick={onItemDoubleClick}
+              onSplitIntoTasks={onSplitIntoTasks}
+              onAcceptToADR={onAcceptToADR}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface ItemCardProps {
   item: BrowserItem;
   viewMode: BrowserViewMode;
-  workflowMode: WorkflowMode;
   onDoubleClick: (item: BrowserItem) => void;
   onSplitIntoTasks: (item: BrowserItem) => void;
   onAcceptToADR: (item: Investigation) => void;
@@ -423,16 +506,9 @@ function ItemCard({
     }
   };
 
-  const getStatusLabel = (status: string): string => {
-    return status.charAt(0).toUpperCase() + status.slice(1);
-  };
-
-  const updated = new Date(item.updated);
-  const updatedStr = updated.toLocaleDateString();
-
   return (
     <div
-      className={`item-card ${getStatusClass(item.status)}`}
+      className={`investigation-card ${getStatusClass(item.status)}`}
       onDoubleClick={() => onDoubleClick(item)}
       role="button"
       tabIndex={0}
@@ -444,15 +520,15 @@ function ItemCard({
     >
       <div className="card-header">
         <span className="card-feature-badge">{item.featureName}</span>
-        <span className={`card-status ${getStatusClass(item.status)}`}>
-          {getStatusLabel(item.status)}
-        </span>
+        {'topic' in item && item.topic && (
+          <span className="card-topic">{item.topic}</span>
+        )}
       </div>
 
       <div className="card-title">{item.title}</div>
 
       {'summary' in item && item.summary && (
-        <div className="card-summary">{item.summary}</div>
+        <div className="card-description">{item.summary}</div>
       )}
 
       {'decision' in item && item.decision && (
@@ -460,10 +536,6 @@ function ItemCard({
           <strong>Decision:</strong> {item.decision}
         </div>
       )}
-
-      <div className="card-footer">
-        <span className="card-updated">Updated {updatedStr}</span>
-      </div>
 
       <div className="card-actions" onClick={(e) => e.stopPropagation()}>
         <button

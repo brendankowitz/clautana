@@ -107,7 +107,7 @@ export class InvestigationManager extends EventEmitter {
 
     return {
       name: featureName,
-      path: featurePath,
+      path: path.join(featurePath, 'README.md'), // Point to README.md instead of directory
       investigations,
       specs,
       adrs,
@@ -216,9 +216,11 @@ export class InvestigationManager extends EventEmitter {
 
     // Determine status from content
     let status: Investigation['status'] = 'exploring';
-    if (content.includes('## Status: Viable') || content.includes('Status: ✅ Viable')) {
+    if (content.includes('## Status: Viable') || content.includes('Status: ✅ Viable') || content.includes('**Status:** Viable')) {
       status = 'viable';
-    } else if (content.includes('## Status: Rejected') || content.includes('Status: ❌ Rejected')) {
+    } else if (content.includes('## Status: Planned') || content.includes('Status: 📋 Planned') || content.includes('**Status:** Planned')) {
+      status = 'planned';
+    } else if (content.includes('## Status: Rejected') || content.includes('Status: ❌ Rejected') || content.includes('**Status:** Rejected')) {
       status = 'rejected';
     }
 

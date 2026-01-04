@@ -44,6 +44,7 @@ export interface AgentStatusEntry {
   role: string;
   status: string;
   focus: string;
+  workItemId?: string;
 }
 
 /**
