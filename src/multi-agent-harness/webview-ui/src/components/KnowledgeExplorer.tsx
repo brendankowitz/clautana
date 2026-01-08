@@ -194,12 +194,14 @@ export function KnowledgeExplorer() {
         >
           Facts ({filteredFacts.length})
         </button>
+        {/* Sessions tab hidden until more implemented
         <button
           className={`tab ${activeTab === "sessions" ? "active" : ""}`}
           onClick={() => setActiveTab("sessions")}
         >
           Sessions ({filteredSessions.length})
         </button>
+        */}
         <button
           className={`tab ${activeTab === "playbooks" ? "active" : ""}`}
           onClick={() => setActiveTab("playbooks")}

@@ -129,6 +129,17 @@ export const MemoryConfigSchema = z.object({
     .optional(),
 });
 
+// Task generation configuration schema
+export const TaskGenerationConfigSchema = z.object({
+  descriptionFormat: z.enum(["plain", "user-story"]).optional(),
+});
+
+// Workflow configuration schema
+export const WorkflowConfigSchema = z.object({
+  mode: z.enum(["adr", "spec-kit", "hybrid", "auto"]).optional(),
+  taskGeneration: TaskGenerationConfigSchema.optional(),
+});
+
 // Main Clautana configuration schema
 export const ClautanaConfigSchema = z.object({
   name: z.string().optional(),
@@ -138,6 +149,7 @@ export const ClautanaConfigSchema = z.object({
   hooks: z.array(HookConfigSchema).optional(),
   memory: MemoryConfigSchema.optional(),
   ignore: z.array(z.string()).optional(),
+  workflow: WorkflowConfigSchema.optional(),
 });
 
 // ============================================================================

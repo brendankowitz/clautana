@@ -26,6 +26,18 @@ type SDKMessage = any; // Will be from the SDK
 type Query = AsyncGenerator<SDKMessage, void>;
 
 /**
+ * Map model tier names to actual model IDs
+ */
+function getModelId(tier: string): string {
+  const modelMap: Record<string, string> = {
+    'opus': 'claude-opus-4-20250514',
+    'sonnet': 'claude-sonnet-4-20250514',
+    'haiku': 'claude-haiku-3-20250514',
+  };
+  return modelMap[tier] || modelMap['sonnet'];
+}
+
+/**
  * System prompt for the orchestrator agent - Team Manager Persona
  *
  * The orchestrator embodies a "Team Manager" responsible for:
@@ -471,7 +483,8 @@ export class OrchestratorAgent extends EventEmitter {
     }
 
     const config = vscode.workspace.getConfiguration("clautana");
-    const model = config.get<string>("coordinatorModel") ?? "claude-sonnet-4-20250514";
+    const modelTier = config.get<string>("coordinatorModel") ?? "sonnet";
+    const model = getModelId(modelTier);
 
     try {
       // Dynamic import for ES module SDK

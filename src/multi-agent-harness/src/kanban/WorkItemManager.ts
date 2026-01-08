@@ -275,7 +275,8 @@ export class WorkItemManager extends EventEmitter {
       featureRef: input.featureRef,
     };
 
-    const body = `## Description\n${input.description}\n\n## Acceptance Criteria\n\n## Notes\n`;
+    const acceptanceCriteria = input.acceptanceCriteria || '';
+    const body = `## Description\n${input.description}\n\n## Acceptance Criteria\n${acceptanceCriteria}\n\n## Notes\n`;
 
     await this.writeWorkItemFile(item, body);
 

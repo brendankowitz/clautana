@@ -206,59 +206,150 @@ function generateInvestigationTemplate(
 
 **Feature:** ${featureName}
 **Date:** ${date}
-**Status:** In Progress
+**Status:** Exploring
+**Confidence:** Low | Medium | High
 
-## Summary
+---
 
-<!-- Brief summary of this approach -->
+## Research Questions
 
-## Approach
+<!-- What questions are we trying to answer? -->
 
-<!-- Detailed description of the approach -->
+- [ ] Question 1
+- [ ] Question 2
+- [ ] Question 3
 
-## Pros
+## Context
 
+<!-- Why are we investigating this? What problem does it solve? -->
+
+## Clarifications Needed
+
+<!-- Use [NEEDS CLARIFICATION: question] for unresolved questions -->
+
+- [NEEDS CLARIFICATION: Example question that needs stakeholder input]
+
+---
+
+## Options Considered
+
+### Option A: [Name]
+
+**Description:** Brief description of this approach
+
+**Pros:**
 - Pro 1
 - Pro 2
 
-## Cons
-
+**Cons:**
 - Con 1
 - Con 2
 
-## Technical Details
+**Effort:** ~X agent hours
 
-<!-- Implementation details, architecture, etc. -->
+### Option B: [Name]
 
-\`\`\`typescript
-// Example code snippets
+**Description:** Brief description of this approach
+
+**Pros:**
+- Pro 1
+- Pro 2
+
+**Cons:**
+- Con 1
+- Con 2
+
+**Effort:** ~X agent hours
+
+---
+
+## Research Findings
+
+### Finding 1: [Title]
+
+**Source:** [Link or reference]
+**Relevance:** How this applies to our investigation
+
+### Finding 2: [Title]
+
+**Source:** [Link or reference]
+**Relevance:** How this applies to our investigation
+
+---
+
+## Technical Analysis
+
+### Architecture Impact
+
+<!-- How does this affect the system architecture? -->
+
+### Data Model Changes
+
+<!-- Any new entities, fields, or relationships? -->
+
+\`\`\`
+// Schema or model changes
 \`\`\`
 
-## Dependencies
+### API/Interface Changes
 
-- Dependency 1
-- Dependency 2
+<!-- New endpoints, events, or contracts? -->
 
-## Risks
+### Dependencies
+
+| Dependency | Type | Notes |
+|------------|------|-------|
+| Example | Library/Service/API | Why needed |
+
+---
+
+## Risk Assessment
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|------------|--------|------------|
-| Risk 1 | Medium | High | Mitigation strategy |
+| Risk 1 | Low/Med/High | Low/Med/High | Mitigation strategy |
 
-## Effort Estimate
-
-- **Development:** X days
-- **Testing:** X days
-- **Documentation:** X days
+---
 
 ## Recommendation
 
-<!-- Should this approach be adopted? Why or why not? -->
+**Recommended Option:** [Option A/B/None]
+**Confidence Level:** Low | Medium | High
 
-## References
+### Rationale
 
-- Link 1
-- Link 2
+<!-- Why is this the recommended approach? -->
+
+### Conditions for Success
+
+- [ ] Condition 1
+- [ ] Condition 2
+
+### Blockers
+
+- [ ] Blocker 1 (owner: @who)
+
+---
+
+## Validation Plan
+
+<!-- How will we validate this approach works? -->
+
+- [ ] Validation step 1
+- [ ] Validation step 2
+
+## Next Steps
+
+- [ ] Next step 1
+- [ ] Next step 2
+
+---
+
+## Changelog
+
+| Date | Author | Change |
+|------|--------|--------|
+| ${date} | Agent | Initial investigation |
 `;
 }
 

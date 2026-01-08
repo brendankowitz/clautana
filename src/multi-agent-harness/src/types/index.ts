@@ -37,9 +37,6 @@ export interface ExtensionConfig {
   /** Maximum number of concurrent worker agents allowed */
   readonly "multiAgent.maxConcurrentAgents": number;
 
-  /** Let coordinator automatically spawn agents vs manual control */
-  readonly "multiAgent.autoSpawnAgents": boolean;
-
   /** Color palette for dynamically spawned agents */
   readonly "multiAgent.agentColorPalette": readonly string[];
 

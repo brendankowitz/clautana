@@ -50,6 +50,10 @@ interface KanbanColumnProps {
   onItemArchive: (item: WorkItem) => void;
   onItemAssign: (item: WorkItem) => void;
   onItemEdit: (item: WorkItem) => void;
+  /** For todo column: callback to start work */
+  onStartWork?: () => void;
+  /** For todo column: whether start work button is enabled */
+  canStartWork?: boolean;
 }
 
 interface KanbanCardProps {
@@ -74,6 +78,8 @@ const COLUMNS: Array<{ status: WorkItemStatus; displayName: string }> = [
   { status: "done", displayName: "Done" },
 ];
 
+type OrchestratorStatus = 'idle' | 'processing' | 'error';
+
 export function KanbanBoard() {
   const vscode = useVsCodeApi();
   const [items, setItems] = useState<WorkItem[]>([]);
@@ -81,6 +87,7 @@ export function KanbanBoard() {
   const [removingTodoIds, setRemovingTodoIds] = useState<Set<string>>(new Set());
   const [assigningItemIds, setAssigningItemIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [orchestratorStatus, setOrchestratorStatus] = useState<OrchestratorStatus>('idle');
 
   // Filters
   const [searchText, setSearchText] = useState<string>("");
@@ -100,7 +107,14 @@ export function KanbanBoard() {
         case "fullState":
           setItems(message.items);
           setTransientTodos(message.transientTodos || []);
+          if (message.orchestratorStatus) {
+            setOrchestratorStatus(message.orchestratorStatus);
+          }
           setError(null);
+          break;
+
+        case "orchestratorStatus":
+          setOrchestratorStatus(message.status);
           break;
 
         case "itemCreated":
@@ -267,6 +281,13 @@ export function KanbanBoard() {
     },
     [vscode]
   );
+
+  const handleStartWork = useCallback(() => {
+    vscode.postMessage({
+      type: "submitTask",
+      task: "Review the pending work items on the Kanban board and continue working on them",
+    });
+  }, [vscode]);
 
   // Filter out cancelled items from the main board
   // Apply filters
@@ -475,22 +496,29 @@ export function KanbanBoard() {
       </div>
 
       <div className="kanban-board">
-        {COLUMNS.map((column) => (
-          <KanbanColumn
-            key={column.status}
-            status={column.status}
-            displayName={column.displayName}
-            items={activeItems.filter((item) => item.status === column.status)}
-            transientTodos={getTransientTodosForColumn(column.status)}
-            assigningItemIds={assigningItemIds}
-            onDrop={handleDrop}
-            onItemDoubleClick={handleDoubleClick}
-            onItemDelete={handleDelete}
-            onItemArchive={handleArchive}
-            onItemAssign={handleAssign}
-            onItemEdit={handleEdit}
-          />
-        ))}
+        {COLUMNS.map((column) => {
+          const columnItems = activeItems.filter((item) => item.status === column.status);
+          return (
+            <KanbanColumn
+              key={column.status}
+              status={column.status}
+              displayName={column.displayName}
+              items={columnItems}
+              transientTodos={getTransientTodosForColumn(column.status)}
+              assigningItemIds={assigningItemIds}
+              onDrop={handleDrop}
+              onItemDoubleClick={handleDoubleClick}
+              onItemDelete={handleDelete}
+              onItemArchive={handleArchive}
+              onItemAssign={handleAssign}
+              onItemEdit={handleEdit}
+              {...(column.status === 'todo' ? {
+                onStartWork: handleStartWork,
+                canStartWork: orchestratorStatus === 'idle' && columnItems.length > 0,
+              } : {})}
+            />
+          );
+        })}
       </div>
 
       {cancelledItems.length > 0 && (
@@ -529,6 +557,8 @@ function KanbanColumn({
   onItemArchive,
   onItemAssign,
   onItemEdit,
+  onStartWork,
+  canStartWork,
 }: KanbanColumnProps) {
   const [isDragOver, setIsDragOver] = useState(false);
 
@@ -571,7 +601,20 @@ function KanbanColumn({
       onDrop={handleDrop}
     >
       <div className="column-header">
-        <h3 className="column-title">{displayName}</h3>
+        <div className="column-title-row">
+          <h3 className="column-title">{displayName}</h3>
+          {onStartWork && (
+            <button
+              className={`start-work-button ${canStartWork ? '' : 'disabled'}`}
+              onClick={onStartWork}
+              disabled={!canStartWork}
+              title={canStartWork ? `Continue working on ${items.length} item${items.length !== 1 ? 's' : ''}` : "Orchestrator is busy"}
+              aria-label="Continue work items"
+            >
+              <span className="play-icon">▶</span>
+            </button>
+          )}
+        </div>
         <span className="item-count">{totalCount}</span>
       </div>
       <div className="column-items">
@@ -704,11 +747,11 @@ function KanbanCard({
       )}
 
       {item.estimatedHours !== null && (
-        <div className="card-estimate">
+        <div className="card-estimate" title="Estimated agent hours">
           <span className="estimate-icon" aria-hidden="true">
             ~
           </span>
-          <span className="estimate-value">{item.estimatedHours}h</span>
+          <span className="estimate-value">{item.estimatedHours} agent hrs</span>
         </div>
       )}
 

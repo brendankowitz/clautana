@@ -12,7 +12,7 @@ export interface Investigation {
   featureName: string;
   topic: string;
   title: string;
-  status: 'exploring' | 'viable' | 'planned' | 'rejected';
+  status: 'exploring' | 'viable' | 'accepted' | 'rejected';
   filePath: string;
   created: Date;
   updated: Date;
@@ -40,7 +40,7 @@ export interface ADR {
   id: string;
   featureName: string;
   title: string;
-  status: 'proposed' | 'accepted' | 'rejected' | 'superseded';
+  status: 'draft' | 'proposed' | 'accepted' | 'rejected' | 'superseded' | 'deprecated';
   filePath: string;
   created: Date;
   updated: Date;
@@ -68,4 +68,4 @@ export type BrowserItem = Investigation | Spec | ADR;
 /**
  * Browser view mode
  */
-export type BrowserViewMode = 'investigations' | 'specs' | 'adrs';
+export type BrowserViewMode = 'features' | 'investigations' | 'specs' | 'adrs';

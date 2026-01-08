@@ -215,11 +215,13 @@ export class InvestigationManager extends EventEmitter {
     const title = titleMatch ? titleMatch[1] : topic;
 
     // Determine status from content
+    // Note: "Planned" is treated as "Accepted" for backwards compatibility
     let status: Investigation['status'] = 'exploring';
     if (content.includes('## Status: Viable') || content.includes('Status: ✅ Viable') || content.includes('**Status:** Viable')) {
       status = 'viable';
-    } else if (content.includes('## Status: Planned') || content.includes('Status: 📋 Planned') || content.includes('**Status:** Planned')) {
-      status = 'planned';
+    } else if (content.includes('## Status: Accepted') || content.includes('Status: ✅ Accepted') || content.includes('**Status:** Accepted') ||
+               content.includes('## Status: Planned') || content.includes('Status: 📋 Planned') || content.includes('**Status:** Planned')) {
+      status = 'accepted';
     } else if (content.includes('## Status: Rejected') || content.includes('Status: ❌ Rejected') || content.includes('**Status:** Rejected')) {
       status = 'rejected';
     }
@@ -305,14 +307,34 @@ export class InvestigationManager extends EventEmitter {
     const titleMatch = content.match(/^#\s+(.+)$/m);
     const title = titleMatch ? titleMatch[1] : path.basename(filePath, '.md');
 
-    // Determine status
-    let status: ADR['status'] = 'proposed';
-    if (content.includes('Status: Accepted') || content.includes('## Status: Accepted')) {
-      status = 'accepted';
-    } else if (content.includes('Status: Rejected') || content.includes('## Status: Rejected')) {
-      status = 'rejected';
-    } else if (content.includes('Status: Superseded') || content.includes('## Status: Superseded')) {
-      status = 'superseded';
+    // Determine status - check for various formats:
+    // "**Status:** X", "**Status**: X", "## Status: X", "Status: X"
+    let status: ADR['status'] = 'draft';
+    const statusPatterns = [
+      /\*\*Status[:\*]*\*?\*?:?\s*(\w+)/i,
+      /##\s*Status:\s*(\w+)/i,
+      /Status:\s*(\w+)/i,
+    ];
+
+    for (const pattern of statusPatterns) {
+      const match = content.match(pattern);
+      if (match) {
+        const foundStatus = match[1].toLowerCase();
+        if (foundStatus === 'accepted') {
+          status = 'accepted';
+        } else if (foundStatus === 'rejected') {
+          status = 'rejected';
+        } else if (foundStatus === 'superseded') {
+          status = 'superseded';
+        } else if (foundStatus === 'deprecated') {
+          status = 'deprecated';
+        } else if (foundStatus === 'proposed') {
+          status = 'proposed';
+        } else if (foundStatus === 'draft') {
+          status = 'draft';
+        }
+        break;
+      }
     }
 
     // Extract decision

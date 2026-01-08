@@ -262,59 +262,83 @@ body {
 }
 
 /* ================================================
-   Agent Bar (horizontal at bottom)
+   Agent Panel (collapsible tree below chat)
    ================================================ */
-.agent-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 16px;
-  background-color: var(--vscode-sideBarSectionHeader-background);
+.agent-panel {
+  background-color: var(--vscode-sideBar-background);
   border-top: 1px solid var(--vscode-panel-border);
   flex-shrink: 0;
-  flex-wrap: wrap;
 }
 
-.agent-bar-status {
+.agent-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 14px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--vscode-foreground);
+  font-family: inherit;
+  font-size: 0.9em;
+}
+
+.agent-panel-header:hover {
+  background-color: var(--vscode-list-hoverBackground);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-right {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.agent-bar-status .status-label {
-  font-size: 0.85em;
-  color: var(--vscode-foreground);
+.expand-icon {
+  font-size: 0.7em;
+  transition: transform 0.2s;
+  opacity: 0.6;
+}
+
+.expand-icon.expanded {
+  transform: rotate(90deg);
+}
+
+.orchestrator-label {
   font-weight: 500;
 }
 
-.agent-bar-divider {
-  width: 1px;
-  height: 20px;
-  background-color: var(--vscode-panel-border);
-}
-
-.agent-bar-label {
+.agent-count {
   font-size: 0.8em;
-  color: var(--vscode-descriptionForeground);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  background-color: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  border-radius: 10px;
 }
 
-.agent-bar-agents {
+/* Agent Tree (expanded view) */
+.agent-tree {
+  padding: 4px 8px 10px 8px;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.agent-chip {
+.agent-tree-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 12px;
   background-color: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 16px;
+  border-radius: 6px;
   cursor: pointer;
   color: var(--vscode-foreground);
   font-family: inherit;
@@ -322,24 +346,132 @@ body {
   transition: background-color 0.15s, border-color 0.15s;
 }
 
-.agent-chip:hover {
+.agent-tree-item:hover {
   background-color: var(--vscode-list-hoverBackground);
   border-color: var(--vscode-focusBorder);
 }
 
-.agent-chip-color {
-  width: 8px;
-  height: 8px;
+.agent-tree-item.active {
+  border-color: var(--vscode-charts-blue);
+}
+
+.agent-tree-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tree-indent {
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.5;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+.agent-color-dot {
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
-.agent-chip-name {
-  font-weight: 500;
-  max-width: 120px;
+.agent-color-dot.small {
+  width: 8px;
+  height: 8px;
+}
+
+.agent-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agent-name {
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.agent-role {
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-tree-right {
+  flex-shrink: 0;
+}
+
+.agent-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.75em;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 10px;
+  border: 1px solid;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.status-dot-inline {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.status-dot-inline.small {
+  width: 5px;
+  height: 5px;
+}
+
+/* Collapsed view - mini chips */
+.agent-chips-collapsed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px 10px 14px;
+  flex-wrap: wrap;
+}
+
+.agent-chip-mini {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  background-color: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 12px;
+  cursor: pointer;
+  color: var(--vscode-foreground);
+  font-family: inherit;
+  font-size: 0.8em;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.agent-chip-mini:hover {
+  background-color: var(--vscode-list-hoverBackground);
+  border-color: var(--vscode-focusBorder);
+}
+
+.chip-name {
+  font-weight: 500;
+  max-width: 80px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.more-agents {
+  font-size: 0.8em;
+  color: var(--vscode-descriptionForeground);
+  padding: 3px 6px;
 }
 
 .status-dot.small {

@@ -145,7 +145,8 @@ export async function createWorkItemsMcpTools(agentName: string): Promise<any[]>
       "Create a new User Story in the todo column. User Stories represent discrete units of work derived from Features (ADR/Investigation documents). When working on a task related to an ADR or investigation, link it to the feature using featureRef.",
       {
         title: z.string().describe("Short title for the User Story"),
-        description: z.string().describe("Detailed description with acceptance criteria"),
+        description: z.string().describe("Detailed description of what needs to be done"),
+        acceptanceCriteria: z.string().optional().describe("Bullet-pointed list of acceptance criteria that define when this task is complete (e.g., '- Unit tests pass\\n- API returns 200')"),
         priority: z
           .enum(["critical", "high", "medium", "low"])
           .default("medium")
@@ -160,6 +161,7 @@ export async function createWorkItemsMcpTools(agentName: string): Promise<any[]>
           const item = await manager.createItem({
             title: args.title,
             description: args.description,
+            acceptanceCriteria: args.acceptanceCriteria,
             priority: args.priority as WorkItemPriority,
             tags: args.tags,
             estimatedHours: args.estimatedHours,

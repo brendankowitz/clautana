@@ -219,6 +219,9 @@ export class KanbanPanel {
           case "assignItem":
             await this.handleAssignItem(message);
             break;
+          case "submitTask":
+            await this.handleSubmitTask(message);
+            break;
           default:
             console.log('[KanbanPanel] Unknown message type:', message.type);
         }
@@ -270,6 +273,21 @@ export class KanbanPanel {
     try {
       const workItemManager = await getWorkItemManagerModule();
       await workItemManager.moveItem(message.itemId, message.newStatus);
+
+      // When moving to code-review, trigger the orchestrator to assign a reviewer
+      if (message.newStatus === 'code-review') {
+        const { getOrchestrator } = await import("../extension");
+        const orchestrator = getOrchestrator();
+
+        if (orchestrator) {
+          // Fire-and-forget: trigger reviewer assignment
+          orchestrator.handleUserTask(
+            `Work item ${message.itemId} has been moved to code review. Please assign a reviewer and begin the code review process.`
+          ).catch(err => {
+            console.error("[KanbanPanel] Failed to trigger reviewer assignment:", err);
+          });
+        }
+      }
     } catch (error) {
       console.error("[KanbanPanel] Failed to move item:", error);
       this.postMessage({
@@ -401,6 +419,52 @@ export class KanbanPanel {
       this.postMessage({
         type: "error",
         message: `Failed to assign item: ${error instanceof Error ? error.message : "Unknown error"}`,
+      });
+    }
+  }
+
+  private async handleSubmitTask(message: { task: string }): Promise<void> {
+    console.log('[KanbanPanel] handleSubmitTask called with:', message.task);
+    try {
+      const { getOrchestrator } = await import("../extension");
+      const orchestrator = getOrchestrator();
+
+      if (!orchestrator) {
+        vscode.window.showErrorMessage(
+          "Orchestrator not available. Please ensure the multi-agent system is initialized."
+        );
+        this.postMessage({
+          type: "error",
+          message: "Orchestrator not available. Please ensure the multi-agent system is initialized.",
+        });
+        return;
+      }
+
+      // Enhance the task with prioritization guidance
+      const enhancedTask = `${message.task}
+
+PRIORITIZATION GUIDANCE:
+1. First, check items in the CODE REVIEW column - these need reviewer assignment and review completion
+2. Next, check items in the DOING column to understand current work state - if work is in progress, determine what remains and continue from where it left off
+3. Then, pick up TODO items by priority (critical > high > medium > low)
+
+When resuming work on items in DOING:
+- Read any existing work files or branches
+- Check git status to see what changes exist
+- Continue implementation from the current state rather than starting over`;
+
+      // Send the enhanced task to the orchestrator
+      await orchestrator.handleUserTask(enhancedTask);
+
+      vscode.window.showInformationMessage("Task submitted to orchestrator.");
+    } catch (error) {
+      console.error("[KanbanPanel] Failed to submit task:", error);
+      vscode.window.showErrorMessage(
+        `Failed to submit task: ${error instanceof Error ? error.message : "Unknown error"}`
+      );
+      this.postMessage({
+        type: "error",
+        message: `Failed to submit task: ${error instanceof Error ? error.message : "Unknown error"}`,
       });
     }
   }

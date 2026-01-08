@@ -586,17 +586,15 @@ export function registerSlashCommands(
     })
   );
 
-  // Register workflow mode switcher
-  const statusBar = new WorkflowModeStatusBar(configManager);
-  context.subscriptions.push(statusBar);
-  context.subscriptions.push(
-    vscode.commands.registerCommand('clautana.switchWorkflowMode', async () => {
-      await statusBar.showModeSwitcher();
-    })
-  );
-
-  // Update status bar when config changes
-  configManager.onConfigChanged(() => {
-    statusBar.updateStatusBar();
-  });
+  // Workflow mode status bar hidden for now - using ADR workflow by default
+  // const statusBar = new WorkflowModeStatusBar(configManager);
+  // context.subscriptions.push(statusBar);
+  // context.subscriptions.push(
+  //   vscode.commands.registerCommand('clautana.switchWorkflowMode', async () => {
+  //     await statusBar.showModeSwitcher();
+  //   })
+  // );
+  // configManager.onConfigChanged(() => {
+  //   statusBar.updateStatusBar();
+  // });
 }

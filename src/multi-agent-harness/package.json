@@ -7,9 +7,20 @@
   "engines": {
     "vscode": "^1.84.0"
   },
-  "categories": ["Other", "Machine Learning"],
-  "keywords": ["claude", "ai", "agent", "multi-agent", "mcp", "clautana", "orchestration"],
-  "icon": "resources/agent-icon.svg",
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "claude",
+    "ai",
+    "agent",
+    "multi-agent",
+    "mcp",
+    "clautana",
+    "orchestration"
+  ],
+  "icon": "resources/icon.png",
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -148,7 +159,7 @@
         {
           "id": "clautana",
           "title": "Clautana",
-          "icon": "resources/agent-icon.svg"
+          "icon": "resources/icon.svg"
         }
       ]
     },
@@ -160,12 +171,6 @@
           "name": "Orchestrator Chat",
           "contextualTitle": "Clautana Orchestrator",
           "visibility": "visible"
-        },
-        {
-          "id": "clautana.agents",
-          "name": "Agents",
-          "contextualTitle": "Active Agents",
-          "visibility": "collapsed"
         },
         {
           "id": "clautana.claims",
@@ -181,12 +186,6 @@
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "clautana.agents",
-        "contents": "No agents running.\nSubmit a task to the orchestrator to spawn agents."
-      }
-    ],
     "menus": {
       "editor/context": [
         {
@@ -239,23 +238,38 @@
       "properties": {
         "clautana.coordinatorModel": {
           "type": "string",
-          "default": "claude-sonnet-4-20250514",
+          "enum": [
+            "opus",
+            "sonnet",
+            "haiku"
+          ],
+          "default": "sonnet",
+          "enumDescriptions": [
+            "Claude Opus - Most capable, best for complex orchestration",
+            "Claude Sonnet - Balanced performance and speed (recommended)",
+            "Claude Haiku - Fastest, best for simple coordination tasks"
+          ],
           "description": "Model to use for the orchestrator agent"
         },
         "clautana.workerModel": {
           "type": "string",
-          "default": "claude-sonnet-4-20250514",
+          "enum": [
+            "opus",
+            "sonnet",
+            "haiku"
+          ],
+          "default": "sonnet",
+          "enumDescriptions": [
+            "Claude Opus - Most capable, best for complex tasks",
+            "Claude Sonnet - Balanced performance and speed (recommended)",
+            "Claude Haiku - Fastest, best for simple tasks"
+          ],
           "description": "Model to use for spawned worker agents"
         },
         "clautana.maxConcurrentAgents": {
           "type": "number",
           "default": 5,
           "description": "Maximum number of concurrent worker agents"
-        },
-        "clautana.autoSpawnAgents": {
-          "type": "boolean",
-          "default": true,
-          "description": "Let orchestrator automatically spawn agents (vs manual control)"
         },
         "clautana.mcpServers": {
           "type": "object",
@@ -279,7 +293,16 @@
         },
         "clautana.agentColorPalette": {
           "type": "array",
-          "default": ["#3B82F6", "#EF4444", "#F59E0B", "#10B981", "#8B5CF6", "#EC4899", "#06B6D4", "#84CC16"],
+          "default": [
+            "#3B82F6",
+            "#EF4444",
+            "#F59E0B",
+            "#10B981",
+            "#8B5CF6",
+            "#EC4899",
+            "#06B6D4",
+            "#84CC16"
+          ],
           "description": "Color palette for dynamically spawned agents"
         },
         "clautana.memory.enabled": {
@@ -302,17 +325,18 @@
           "default": false,
           "description": "Automatically spawn a review agent when agents complete"
         },
-        "clautana.workflow.mode": {
+        "clautana.workflow.taskDescriptionFormat": {
           "type": "string",
-          "enum": ["adr", "spec-kit", "hybrid", "auto"],
-          "default": "auto",
-          "enumDescriptions": [
-            "ADR Workflow: Investigation-driven with formal decision tracking (/fn-* commands)",
-            "Spec-Kit Workflow: Spec-driven with GitHub templates (/speckit.* commands)",
-            "Hybrid Mode: Use both ADR and Spec-Kit workflows as needed",
-            "Auto-Detect: Automatically choose workflow based on project structure"
+          "enum": [
+            "plain",
+            "user-story"
           ],
-          "description": "Workflow mode for slash commands and agent orchestration"
+          "default": "plain",
+          "enumDescriptions": [
+            "Plain text descriptions (e.g., 'Implement login button functionality')",
+            "User story format (e.g., 'As a user, I want a login button so that I can access my account')"
+          ],
+          "description": "Format for task descriptions when splitting investigations into tasks"
         }
       }
     },
@@ -369,10 +393,12 @@
     "@types/vscode": "^1.84.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
+    "@vscode/vsce": "^3.7.1",
     "eslint": "^8.50.0",
+    "sharp": "^0.34.5",
+    "ts-loader": "^9.4.0",
     "typescript": "^5.2.0",
     "webpack": "^5.88.0",
-    "webpack-cli": "^5.1.0",
-    "ts-loader": "^9.4.0"
+    "webpack-cli": "^5.1.0"
   }
 }

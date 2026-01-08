@@ -103,6 +103,12 @@ export class InvestigationPanel {
             console.log('[InvestigationPanel] About to call handleCreateInvestigation');
             await this.handleCreateInvestigation(message);
             break;
+          case "changeItemStatus":
+            await this.handleChangeItemStatus(message);
+            break;
+          case "archiveInvestigation":
+            await this.handleArchiveInvestigation(message);
+            break;
           default:
             console.log('[InvestigationPanel] Unknown message type:', message.type);
         }
@@ -201,10 +207,8 @@ export class InvestigationPanel {
         return;
       }
 
-      // Read the investigation/spec content
-      console.log('[InvestigationPanel] Reading file:', message.filePath);
-      const content = await vscode.workspace.fs.readFile(vscode.Uri.file(message.filePath));
-      const contentStr = Buffer.from(content).toString('utf-8');
+      // Get task description format from VS Code settings
+      const descriptionFormat = vscode.workspace.getConfiguration('clautana.workflow').get<string>('taskDescriptionFormat') || 'plain';
 
       // Extract feature name from path: .clautana/features/{featureName}/investigations/...
       // or .clautana/features/{featureName}/specs/...
@@ -216,36 +220,58 @@ export class InvestigationPanel {
 
       console.log('[InvestigationPanel] Sending task to orchestrator...');
       console.log('[InvestigationPanel] Feature name:', featureName);
+      console.log('[InvestigationPanel] File path:', message.filePath);
+      console.log('[InvestigationPanel] Description format:', descriptionFormat);
 
-      // Send a task to the orchestrator to split into tasks
+      // Build description format instruction based on config
+      const descriptionFormatInstruction = descriptionFormat === 'user-story'
+        ? `- Write each task description in USER STORY format: "As a [user/role], I want [feature/action] so that [benefit/reason]." Example: "As a user, I want a login button so that I can access my account."`
+        : `- Write each task description in plain text format, clearly describing what needs to be done.`;
+
+      // Send a task to the orchestrator with just a file reference (let the agent read it)
       await orchestrator.handleUserTask(
-        `Read the investigation/spec at ${message.filePath} and split it into actionable tasks on the Kanban board. Create work items for each task.
+        `Read the investigation/spec file at "${message.filePath}" and split it into actionable tasks on the Kanban board. Create work items for each task.
 
-IMPORTANT: When creating work items, set the featureRef to "${featureName}" (NOT "investigations" or "specs" - use the parent feature name).
-
-Content:
-${contentStr}`
+IMPORTANT:
+- When creating work items, set the featureRef to "${featureName}" (NOT "investigations" or "specs" - use the parent feature name).
+- Estimate time in "agent hours" - this represents how long an AI agent would take to complete the task, not human hours. Agent hours are typically much shorter than human hours for coding tasks.
+${descriptionFormatInstruction}
+- For EACH task, you MUST fill in the acceptanceCriteria field with specific, testable criteria that define when the task is complete. Use bullet points for multiple criteria.
+- Acceptance criteria should be concrete and verifiable (e.g., "Unit tests pass", "API returns 200 status", "UI displays error message on invalid input").`
       );
 
       console.log('[InvestigationPanel] Task sent successfully');
 
-      // Update the investigation status to "Planned"
-      // Match both formats: "## Status: X" and "**Status:** X"
-      let updatedContent = contentStr.replace(
-        /\*\*Status:\*\*\s*(In Progress|Exploring|Viable)/i,
-        '**Status:** Planned'
-      );
-      // Also try the heading format
-      if (updatedContent === contentStr) {
-        updatedContent = contentStr.replace(
-          /##\s*Status:\s*(Exploring|Viable)/i,
-          '## Status: Planned'
+      // Add a Tasks field to indicate tasks have been created
+      const content = await vscode.workspace.fs.readFile(vscode.Uri.file(message.filePath));
+      const contentStr = Buffer.from(content).toString('utf-8');
+
+      // Format today's date as YYYY-MM-DD
+      const today = new Date().toISOString().split('T')[0];
+
+      // Check if Tasks field already exists
+      if (!contentStr.includes('**Tasks:**')) {
+        // Insert Tasks field after Status line
+        let updatedContent = contentStr.replace(
+          /(\*\*Status:\*\*\s*[^\n]+)/i,
+          `$1\n**Tasks:** Created (${today})`
         );
+
+        // If no match with bold format, try heading format
+        if (updatedContent === contentStr) {
+          updatedContent = contentStr.replace(
+            /(##\s*Status:\s*[^\n]+)/i,
+            `$1\n**Tasks:** Created (${today})`
+          );
+        }
+
+        if (updatedContent !== contentStr) {
+          await vscode.workspace.fs.writeFile(
+            vscode.Uri.file(message.filePath),
+            Buffer.from(updatedContent, 'utf-8')
+          );
+        }
       }
-      await vscode.workspace.fs.writeFile(
-        vscode.Uri.file(message.filePath),
-        Buffer.from(updatedContent, 'utf-8')
-      );
 
       vscode.window.showInformationMessage(
         `Splitting ${message.itemId} into tasks...`
@@ -266,60 +292,77 @@ ${contentStr}`
   }
 
   private async handleAcceptToADR(message: { itemId: string; filePath: string; featureName: string }): Promise<void> {
+    console.log('[InvestigationPanel] handleAcceptToADR called with:', message);
     try {
-      // Move the investigation to the ADR folder
+      // Get orchestrator to create a proper ADR from the investigation
+      const { getOrchestrator } = await import("../extension");
+      const orchestrator = getOrchestrator();
+
+      if (!orchestrator) {
+        const errorMsg = "Orchestrator not available. Please ensure the multi-agent system is initialized.";
+        console.error('[InvestigationPanel]', errorMsg);
+        vscode.window.showErrorMessage(errorMsg);
+        this.postMessage({
+          type: "error",
+          message: errorMsg,
+        });
+        return;
+      }
+
       const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
       if (!workspaceFolder) {
         throw new Error("No workspace folder found");
       }
 
+      // Determine the ADR output path
       const clautanaDir = vscode.Uri.joinPath(workspaceFolder.uri, '.clautana');
       const featureDir = vscode.Uri.joinPath(clautanaDir, 'features', message.featureName);
       const adrDir = vscode.Uri.joinPath(featureDir, 'adr');
 
-      // Ensure ADR directory exists
-      await vscode.workspace.fs.createDirectory(adrDir);
+      // Get the filename base for the ADR
+      const investigationFileName = message.filePath.split(/[/\\]/).pop() || 'investigation.md';
+      const adrFileName = investigationFileName.replace(/^investigation-/, 'adr-');
 
-      // Get the filename
-      const fileName = message.filePath.split(/[/\\]/).pop() || 'investigation.md';
+      console.log('[InvestigationPanel] Sending task to orchestrator to create ADR...');
+      console.log('[InvestigationPanel] Feature:', message.featureName);
+      console.log('[InvestigationPanel] Investigation file:', message.filePath);
+      console.log('[InvestigationPanel] ADR directory:', adrDir.fsPath);
 
-      // New ADR path
-      const newAdrPath = vscode.Uri.joinPath(adrDir, fileName);
+      // Send task to orchestrator to create a proper ADR
+      await orchestrator.handleUserTask(
+        `Promote the investigation at "${message.filePath}" to an Architecture Decision Record (ADR).
 
-      // Read current content
-      const content = await vscode.workspace.fs.readFile(vscode.Uri.file(message.filePath));
-      let contentStr = Buffer.from(content).toString('utf-8');
+INSTRUCTIONS:
+1. Read the investigation file to understand the context, findings, and recommendations
+2. Create a new ADR file at "${adrDir.fsPath}/${adrFileName}" using the standard ADR template format:
+   - Title: Clear decision title
+   - Status: Accepted
+   - Context: Summarize the problem/situation from the investigation
+   - Decision: State the architectural decision clearly and concisely
+   - Consequences: List the positive and negative outcomes of this decision
+   - References: Link back to the original investigation file for detailed analysis
 
-      // Update status to Accepted
-      contentStr = contentStr.replace(
-        /## Status: (Viable|Exploring)/,
-        '## Status: Accepted'
+3. The ADR should be at a higher level than the investigation - focus on the DECISION and its implications, not all the research details
+4. After creating the ADR, update the original investigation file's status to "Accepted" and add a reference to the new ADR
+
+Feature: ${message.featureName}
+Investigation ID: ${message.itemId}`
       );
-
-      // Add acceptance timestamp
-      const timestamp = new Date().toISOString().split('T')[0];
-      contentStr = contentStr.replace(
-        /## Status: Accepted/,
-        `## Status: Accepted\n\n**Accepted on:** ${timestamp}`
-      );
-
-      // Write to ADR location
-      await vscode.workspace.fs.writeFile(newAdrPath, Buffer.from(contentStr, 'utf-8'));
-
-      // Delete original investigation file
-      await vscode.workspace.fs.delete(vscode.Uri.file(message.filePath));
 
       vscode.window.showInformationMessage(
-        `Investigation accepted as ADR: ${fileName}`
+        `Promoting investigation to ADR...`
       );
 
-      // Refresh the browser
-      await this.sendFullState();
+      // Refresh the browser after a short delay to allow the orchestrator to work
+      setTimeout(() => this.sendFullState(), 2000);
     } catch (error) {
       console.error("[InvestigationPanel] Failed to accept to ADR:", error);
+      vscode.window.showErrorMessage(
+        `Failed to promote to ADR: ${error instanceof Error ? error.message : "Unknown error"}`
+      );
       this.postMessage({
         type: "error",
-        message: `Failed to accept to ADR: ${error instanceof Error ? error.message : "Unknown error"}`,
+        message: `Failed to promote to ADR: ${error instanceof Error ? error.message : "Unknown error"}`,
       });
     }
   }
@@ -394,6 +437,140 @@ ${contentStr}`
       vscode.window.showErrorMessage(
         `Failed to create investigation: ${error instanceof Error ? error.message : "Unknown error"}`
       );
+    }
+  }
+
+  private async handleChangeItemStatus(message: { itemId: string; newStatus: string }): Promise<void> {
+    console.log('[InvestigationPanel] handleChangeItemStatus:', message);
+    try {
+      // Read the investigation file
+      // The itemId format is like "investigation-{featureName}-{topic}"
+      // We need to find the file and update its status in the frontmatter/content
+
+      const investigationManager = await getInvestigationManagerModule();
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      if (!workspaceFolder) {
+        throw new Error("No workspace folder found");
+      }
+
+      await investigationManager.initialize(workspaceFolder.uri.fsPath);
+
+      // Find the investigation by ID
+      const features = await investigationManager.getFeatures();
+      let targetInvestigation: any = null;
+
+      for (const feature of features) {
+        const found = feature.investigations.find((inv: any) => inv.id === message.itemId);
+        if (found) {
+          targetInvestigation = found;
+          break;
+        }
+      }
+
+      if (!targetInvestigation) {
+        throw new Error(`Investigation not found: ${message.itemId}`);
+      }
+
+      // Read the file content
+      const content = await vscode.workspace.fs.readFile(vscode.Uri.file(targetInvestigation.filePath));
+      let contentStr = Buffer.from(content).toString('utf-8');
+
+      // Update the status in the file content
+      // Match various status formats with any status value:
+      // - "**Status:** X" or "**Status**: X" (bold with colon variations)
+      // - "## Status: X" (heading format)
+      // - "Status: X" with optional emoji prefix like "Status: ✅ Viable"
+      const statusRegex1 = /\*\*Status:\*\*\s*[^\n]+/i;
+      const statusRegex2 = /\*\*Status\*\*:\s*[^\n]+/i;
+      const statusRegex3 = /##\s*Status:\s*[^\n]+/i;
+      const statusRegex4 = /(?<![#*])Status:\s*(?:[✅📋❌🔍]?\s*)?[^\n]+/i;
+
+      // Capitalize first letter of new status
+      const newStatusCapitalized = message.newStatus.charAt(0).toUpperCase() + message.newStatus.slice(1);
+
+      let updated = false;
+      if (statusRegex1.test(contentStr)) {
+        contentStr = contentStr.replace(statusRegex1, `**Status:** ${newStatusCapitalized}`);
+        updated = true;
+      } else if (statusRegex2.test(contentStr)) {
+        contentStr = contentStr.replace(statusRegex2, `**Status**: ${newStatusCapitalized}`);
+        updated = true;
+      } else if (statusRegex3.test(contentStr)) {
+        contentStr = contentStr.replace(statusRegex3, `## Status: ${newStatusCapitalized}`);
+        updated = true;
+      } else if (statusRegex4.test(contentStr)) {
+        contentStr = contentStr.replace(statusRegex4, `Status: ${newStatusCapitalized}`);
+        updated = true;
+      }
+
+      if (!updated) {
+        throw new Error("Could not find status field in investigation file");
+      }
+
+      // Write the updated content back
+      await vscode.workspace.fs.writeFile(
+        vscode.Uri.file(targetInvestigation.filePath),
+        Buffer.from(contentStr, 'utf-8')
+      );
+
+      vscode.window.showInformationMessage(
+        `Investigation status changed to ${newStatusCapitalized}`
+      );
+
+      // Refresh the browser to show updated status
+      await this.sendFullState();
+    } catch (error) {
+      console.error("[InvestigationPanel] Failed to change item status:", error);
+      vscode.window.showErrorMessage(
+        `Failed to change status: ${error instanceof Error ? error.message : "Unknown error"}`
+      );
+      this.postMessage({
+        type: "error",
+        message: `Failed to change status: ${error instanceof Error ? error.message : "Unknown error"}`,
+      });
+    }
+  }
+
+  private async handleArchiveInvestigation(message: { itemId: string; filePath: string }): Promise<void> {
+    console.log('[InvestigationPanel] handleArchiveInvestigation:', message);
+    try {
+      const filePath = message.filePath;
+      const fileUri = vscode.Uri.file(filePath);
+
+      // Create archived folder path
+      const pathParts = filePath.split(/[/\\]/);
+      const fileName = pathParts.pop()!;
+      const parentDir = pathParts.join('/');
+      const archivedDir = `${parentDir}/archived`;
+      const archivedPath = `${archivedDir}/${fileName}`;
+
+      // Ensure archived directory exists
+      const archivedUri = vscode.Uri.file(archivedDir);
+      try {
+        await vscode.workspace.fs.stat(archivedUri);
+      } catch {
+        await vscode.workspace.fs.createDirectory(archivedUri);
+      }
+
+      // Move file to archived folder
+      const destinationUri = vscode.Uri.file(archivedPath);
+      await vscode.workspace.fs.rename(fileUri, destinationUri, { overwrite: false });
+
+      vscode.window.showInformationMessage(
+        `Investigation archived: ${message.itemId}`
+      );
+
+      // Refresh the browser to remove the item
+      await this.sendFullState();
+    } catch (error) {
+      console.error("[InvestigationPanel] Failed to archive investigation:", error);
+      vscode.window.showErrorMessage(
+        `Failed to archive: ${error instanceof Error ? error.message : "Unknown error"}`
+      );
+      this.postMessage({
+        type: "error",
+        message: `Failed to archive: ${error instanceof Error ? error.message : "Unknown error"}`,
+      });
     }
   }
 

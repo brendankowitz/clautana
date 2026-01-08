@@ -43,6 +43,17 @@ export interface ClautanaConfig {
 export interface WorkflowConfig {
   /** Current workflow mode */
   mode?: 'adr' | 'spec-kit' | 'hybrid' | 'auto';
+
+  /** Task generation settings */
+  taskGeneration?: TaskGenerationConfig;
+}
+
+/**
+ * Task generation configuration
+ */
+export interface TaskGenerationConfig {
+  /** Format for task descriptions */
+  descriptionFormat?: 'plain' | 'user-story';
 }
 
 /**

@@ -30,6 +30,8 @@ export interface WorkItemCreateInput {
   estimatedHours?: number;
   /** Reference to parent feature folder, e.g., "docs/features/kanban-workitems" */
   featureRef?: string;
+  /** Acceptance criteria for the work item */
+  acceptanceCriteria?: string;
 }
 
 export interface WorkItemUpdateInput {

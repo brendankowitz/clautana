@@ -281,6 +281,12 @@
   flex-shrink: 0;
 }
 
+.column-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .column-title {
   font-size: 0.85em;
   font-weight: 600;
@@ -288,6 +294,37 @@
   letter-spacing: 0.5px;
   margin: 0;
   color: var(--vscode-sideBarSectionHeader-foreground);
+}
+
+.start-work-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.15s, opacity 0.15s, transform 0.15s;
+}
+
+.start-work-button:hover:not(:disabled) {
+  background-color: var(--vscode-button-hoverBackground);
+  transform: scale(1.1);
+}
+
+.start-work-button.disabled,
+.start-work-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.play-icon {
+  font-size: 0.65em;
+  margin-left: 1px;
 }
 
 .item-count {
@@ -324,6 +361,55 @@
   color: var(--vscode-descriptionForeground);
   font-size: 0.85em;
   font-style: italic;
+}
+
+/* Column Footer - Continue Work Items button */
+.column-footer {
+  padding: 12px;
+  border-top: 1px solid var(--vscode-panel-border);
+  flex-shrink: 0;
+}
+
+.continue-work-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  background-color: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: 1px solid var(--vscode-button-border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 0.85em;
+  font-weight: 500;
+  font-family: inherit;
+}
+
+.continue-work-button:hover:not(:disabled) {
+  background-color: var(--vscode-button-secondaryHoverBackground);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.continue-work-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.continue-work-button.disabled,
+.continue-work-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.continue-icon {
+  font-size: 0.9em;
+}
+
+.continue-text {
+  flex: 1;
+  text-align: left;
 }
 
 /* Kanban Card */

@@ -39,7 +39,6 @@ export const CONFIG = {
   COORDINATOR_MODEL: 'clautana.coordinatorModel',
   WORKER_MODEL: 'clautana.workerModel',
   MAX_CONCURRENT_AGENTS: 'clautana.maxConcurrentAgents',
-  AUTO_SPAWN_AGENTS: 'clautana.autoSpawnAgents',
   MCP_SERVERS: 'clautana.mcpServers',
   SHOW_CLAIMS_IN_EDITOR: 'clautana.showClaimsInEditor',
   NOTIFY_ON_AGENT_MESSAGE: 'clautana.notifyOnAgentMessage',
