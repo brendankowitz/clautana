@@ -1,9 +1,13 @@
 {
   "name": "clautana",
   "displayName": "Clautana",
-  "description": "AI-powered multi-agent orchestration for VS Code - Claude + Cortana working collaboratively on your codebase",
+  "description": "AI-powered multi-agent orchestration for VS Code - transforms your IDE into a collaborative environment where a team of AI agents works alongside you",
   "version": "0.1.0",
-  "publisher": "ignixa",
+  "publisher": "BrendanKowitz",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/brendankowitz/clautana"
+  },
   "engines": {
     "vscode": "^1.84.0"
   },

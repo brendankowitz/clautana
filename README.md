@@ -2,13 +2,15 @@
 
 <div align="center">
 
-![Clautana Logo](resources/icon.png)
+![Clautana Logo](https://raw.githubusercontent.com/brendankowitz/clautana/main/icon.svg)
 
 ### AI-Powered Multi-Agent Orchestration for VS Code
 
-**Clautana** transforms your IDE into a collaborative environment where a team of AI agents works alongside you.
+**Clautana** transforms your IDE into a collaborative environment where a team of AI agents works alongside you. It is built on the **Claude Agents SDK** and provides a visual orchestration layer for the **Claude Code CLI**.
 
 </div>
+
+![Clautana Screenshot](https://raw.githubusercontent.com/brendankowitz/clautana/main/docs/assets/Screenshot_Styled.jpg)
 
 ---
 
@@ -37,6 +39,7 @@ It transforms the "Feature-First" development lifecycle into an interactive IDE 
 ### Prerequisites
 
 *   **VS Code**: Version 1.84.0 or higher.
+*   **Claude Code CLI**: Installed and authenticated (`npm install -g @anthropic-ai/claude-code`).
 *   **Node.js & npm**: Required for building the extension from source.
 
 ### Building from Source
