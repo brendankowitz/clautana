@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Clautana Logo](https://raw.githubusercontent.com/brendankowitz/clautana/main/icon.svg)
+![Clautana Logo](https://raw.githubusercontent.com/brendankowitz/clautana/main/icon.png)
 
 ### AI-Powered Multi-Agent Orchestration for VS Code
 
@@ -10,7 +10,11 @@
 
 </div>
 
+<div align="center">
+
 ![Clautana Screenshot](https://raw.githubusercontent.com/brendankowitz/clautana/main/docs/assets/Screenshot_Styled.jpg)
+
+</div>
 
 ---
 

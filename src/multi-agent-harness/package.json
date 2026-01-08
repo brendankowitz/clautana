@@ -2,7 +2,7 @@
   "name": "clautana",
   "displayName": "Clautana",
   "description": "AI-powered multi-agent orchestration for VS Code - transforms your IDE into a collaborative environment where a team of AI agents works alongside you",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "BrendanKowitz",
   "repository": {
     "type": "git",
@@ -376,14 +376,15 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run build",
+    "vscode:prepublish": "npm run copy-docs && npm run build",
+    "copy-docs": "node -e \"const fs=require('fs');const path=require('path');const root=path.join(__dirname,'..','..');['README.md','LICENSE'].forEach(f=>{const content=fs.readFileSync(path.join(root,f),'utf8');fs.writeFileSync(f,content);});\"",
     "build": "npm run build:extension && npm run build:webview",
     "build:extension": "webpack --mode production",
     "build:webview": "cd webview-ui && npm run build",
     "watch": "webpack --mode development --watch",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTests.js",
-    "package": "vsce package"
+    "package": "npm run copy-docs && vsce package"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",

@@ -1,0 +1,13 @@
+# Copied documentation files (generated during build)
+README.md
+LICENSE
+
+# Build outputs
+dist/
+out/
+
+# Dependencies
+node_modules/
+
+# Package output
+*.vsix

@@ -36,6 +36,7 @@ docs/**
 !README.md
 !CHANGELOG.md
 !LICENSE.md
+!LICENSE
 
 # Hidden files
 .env
