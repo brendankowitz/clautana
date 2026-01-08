@@ -1,0 +1,65 @@
+{
+  "folders": [
+    {
+      "name": "Root",
+      "path": "."
+    },
+    {
+      "name": "Extension",
+      "path": "src/multi-agent-harness"
+    }
+  ],
+  "settings": {
+    "typescript.tsdk": "src/multi-agent-harness/node_modules/typescript/lib",
+    "typescript.enablePromptUseWorkspaceTsdk": true,
+    "eslint.workingDirectories": [
+      "src/multi-agent-harness"
+    ]
+  },
+  "launch": {
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Run Extension",
+        "type": "extensionHost",
+        "request": "launch",
+        "args": [
+          "--extensionDevelopmentPath=${workspaceFolder:Extension}"
+        ],
+        "outFiles": [
+          "${workspaceFolder:Extension}/dist/**/*.js"
+        ],
+        "preLaunchTask": "npm: watch",
+        "sourceMaps": true
+      }
+    ]
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "type": "npm",
+        "script": "watch",
+        "path": "src/multi-agent-harness/",
+        "problemMatcher": "$tsc-watch",
+        "isBackground": true,
+        "presentation": {
+          "reveal": "never"
+        },
+        "group": {
+          "kind": "build",
+          "isDefault": true
+        },
+        "label": "npm: watch"
+      },
+      {
+        "type": "npm",
+        "script": "build",
+        "path": "src/multi-agent-harness/",
+        "problemMatcher": "$tsc",
+        "group": "build",
+        "label": "npm: build"
+      }
+    ]
+  }
+}
