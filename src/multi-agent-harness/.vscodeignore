@@ -17,6 +17,10 @@ out/**
 node_modules/**
 webview-ui/node_modules/**
 
+# EXCEPT: Include Claude Agent SDK which is needed at runtime
+!node_modules/@anthropic-ai/
+!node_modules/@modelcontextprotocol/
+
 # Tests
 test/**
 .vscode-test/**

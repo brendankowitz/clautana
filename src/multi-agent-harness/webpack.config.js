@@ -12,7 +12,9 @@ const config = {
     libraryTarget: 'commonjs2'
   },
   externals: {
-    vscode: 'commonjs vscode'
+    vscode: 'commonjs vscode',
+    // Keep the Claude Agent SDK external to avoid hardcoded paths during bundling
+    '@anthropic-ai/claude-agent-sdk': 'commonjs @anthropic-ai/claude-agent-sdk'
   },
   resolve: {
     extensions: ['.ts', '.js']

@@ -309,4 +309,5 @@ export interface ExtendedAgentConfig {
   color: string;
   initialStatus?: AgentStatus;
   outputChannel?: { appendLine: (value: string) => void };
+  pathToClaudeCodeExecutable?: string;
 }

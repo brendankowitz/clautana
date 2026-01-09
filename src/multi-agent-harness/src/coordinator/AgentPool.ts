@@ -56,11 +56,12 @@ export class AgentPool extends EventEmitter {
   private readonly pendingAgents = new Map<string, SpawnConfig>();
   private readonly claimsTracker;
   private readonly outputChannel: vscode.OutputChannel;
+  private readonly extensionContext: vscode.ExtensionContext;
   private colorIndex = 0;
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  constructor(_context: vscode.ExtensionContext) {
+  constructor(context: vscode.ExtensionContext) {
     super();
+    this.extensionContext = context;
     this.outputChannel = vscode.window.createOutputChannel("Multi-Agent Pool");
     // Use the global claims tracker shared with MCP tools
     this.claimsTracker = getGlobalClaimsTracker();
@@ -133,6 +134,16 @@ export class AgentPool extends EventEmitter {
       ...userMcpServers,
     };
 
+    // Construct path to Claude Code CLI bundled with the extension
+    const path = require("path");
+    const pathToClaudeCodeExecutable = path.join(
+      this.extensionContext.extensionPath,
+      "node_modules",
+      "@anthropic-ai",
+      "claude-agent-sdk",
+      "cli.js"
+    );
+
     const sessionConfig: ExtendedAgentConfig = {
       name: config.name,
       role: config.role,
@@ -142,6 +153,7 @@ export class AgentPool extends EventEmitter {
       mcpServers,
       color,
       outputChannel: this.outputChannel,
+      pathToClaudeCodeExecutable,
     };
 
     const session = new AgentSession(sessionConfig);

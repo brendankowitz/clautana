@@ -35,6 +35,7 @@ export interface AgentConfig {
   mcpServers?: Record<string, McpServerConfig>;
   initialStatus?: AgentStatus;
   outputChannel?: { appendLine: (value: string) => void };
+  pathToClaudeCodeExecutable?: string;
 }
 
 /**
@@ -163,6 +164,7 @@ export class AgentSession extends EventEmitter {
       permissionMode: "acceptEdits", // Auto-accept file edits
       systemPrompt: this.buildSystemPrompt(),
       abortController: this._abortController,
+      pathToClaudeCodeExecutable: this.config.pathToClaudeCodeExecutable,
       stderr: (data: string) => {
         const line = `[${this.config.name} stderr] ${data}`;
         if (this.config.outputChannel) {
