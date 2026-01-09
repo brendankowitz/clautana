@@ -228,9 +228,12 @@ export class InvestigationPanel {
         ? `- Write each task description in USER STORY format: "As a [user/role], I want [feature/action] so that [benefit/reason]." Example: "As a user, I want a login button so that I can access my account."`
         : `- Write each task description in plain text format, clearly describing what needs to be done.`;
 
+      // Normalize path to use forward slashes (works on all platforms and avoids file URL issues)
+      const normalizedPath = message.filePath.replace(/\\/g, '/');
+
       // Send a task to the orchestrator with just a file reference (let the agent read it)
       await orchestrator.handleUserTask(
-        `Read the investigation/spec file at "${message.filePath}" and split it into actionable tasks on the Kanban board. Create work items for each task.
+        `Read the investigation/spec file at "${normalizedPath}" and split it into actionable tasks on the Kanban board. Create work items for each task.
 
 IMPORTANT:
 - When creating work items, set the featureRef to "${featureName}" (NOT "investigations" or "specs" - use the parent feature name).
@@ -328,13 +331,17 @@ ${descriptionFormatInstruction}
       console.log('[InvestigationPanel] Investigation file:', message.filePath);
       console.log('[InvestigationPanel] ADR directory:', adrDir.fsPath);
 
+      // Normalize paths to use forward slashes (works on all platforms and avoids file URL issues)
+      const normalizedInvestigationPath = message.filePath.replace(/\\/g, '/');
+      const normalizedAdrPath = adrDir.fsPath.replace(/\\/g, '/');
+
       // Send task to orchestrator to create a proper ADR
       await orchestrator.handleUserTask(
-        `Promote the investigation at "${message.filePath}" to an Architecture Decision Record (ADR).
+        `Promote the investigation at "${normalizedInvestigationPath}" to an Architecture Decision Record (ADR).
 
 INSTRUCTIONS:
 1. Read the investigation file to understand the context, findings, and recommendations
-2. Create a new ADR file at "${adrDir.fsPath}/${adrFileName}" using the standard ADR template format:
+2. Create a new ADR file at "${normalizedAdrPath}/${adrFileName}" using the standard ADR template format:
    - Title: Clear decision title
    - Status: Accepted
    - Context: Summarize the problem/situation from the investigation
