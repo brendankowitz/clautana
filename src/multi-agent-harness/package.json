@@ -2,7 +2,7 @@
   "name": "clautana",
   "displayName": "Clautana",
   "description": "AI-powered multi-agent orchestration for VS Code - transforms your IDE into a collaborative environment where a team of AI agents works alongside you",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "publisher": "BrendanKowitz",
   "repository": {
     "type": "git",
