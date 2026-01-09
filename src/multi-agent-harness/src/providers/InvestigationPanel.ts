@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import * as path from "path";
 import type { Investigation, Spec, ADR, BrowserViewMode } from "../investigations/types";
 
 // Lazy import to avoid circular dependencies
@@ -228,12 +229,22 @@ export class InvestigationPanel {
         ? `- Write each task description in USER STORY format: "As a [user/role], I want [feature/action] so that [benefit/reason]." Example: "As a user, I want a login button so that I can access my account."`
         : `- Write each task description in plain text format, clearly describing what needs to be done.`;
 
-      // Normalize path to use forward slashes (works on all platforms and avoids file URL issues)
-      const normalizedPath = message.filePath.replace(/\\/g, '/');
+      // Get workspace folder to calculate relative path
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      let pathForPrompt = message.filePath;
+
+      if (workspaceFolder) {
+        // Use relative path from workspace root to avoid file URL issues
+        pathForPrompt = path.relative(workspaceFolder.uri.fsPath, message.filePath);
+        // Normalize to forward slashes for consistency
+        pathForPrompt = pathForPrompt.replace(/\\/g, '/');
+      }
+
+      console.log('[InvestigationPanel] Path for prompt:', pathForPrompt);
 
       // Send a task to the orchestrator with just a file reference (let the agent read it)
       await orchestrator.handleUserTask(
-        `Read the investigation/spec file at "${normalizedPath}" and split it into actionable tasks on the Kanban board. Create work items for each task.
+        `Read the investigation/spec file at "${pathForPrompt}" and split it into actionable tasks on the Kanban board. Create work items for each task.
 
 IMPORTANT:
 - When creating work items, set the featureRef to "${featureName}" (NOT "investigations" or "specs" - use the parent feature name).
@@ -331,17 +342,29 @@ ${descriptionFormatInstruction}
       console.log('[InvestigationPanel] Investigation file:', message.filePath);
       console.log('[InvestigationPanel] ADR directory:', adrDir.fsPath);
 
-      // Normalize paths to use forward slashes (works on all platforms and avoids file URL issues)
-      const normalizedInvestigationPath = message.filePath.replace(/\\/g, '/');
-      const normalizedAdrPath = adrDir.fsPath.replace(/\\/g, '/');
+      // Get workspace folder to calculate relative paths
+      let investigationPathForPrompt = message.filePath;
+      let adrPathForPrompt = adrDir.fsPath;
+
+      if (workspaceFolder) {
+        // Use relative paths from workspace root to avoid file URL issues
+        investigationPathForPrompt = path.relative(workspaceFolder.uri.fsPath, message.filePath);
+        adrPathForPrompt = path.relative(workspaceFolder.uri.fsPath, adrDir.fsPath);
+        // Normalize to forward slashes for consistency
+        investigationPathForPrompt = investigationPathForPrompt.replace(/\\/g, '/');
+        adrPathForPrompt = adrPathForPrompt.replace(/\\/g, '/');
+      }
+
+      console.log('[InvestigationPanel] Investigation path for prompt:', investigationPathForPrompt);
+      console.log('[InvestigationPanel] ADR path for prompt:', adrPathForPrompt);
 
       // Send task to orchestrator to create a proper ADR
       await orchestrator.handleUserTask(
-        `Promote the investigation at "${normalizedInvestigationPath}" to an Architecture Decision Record (ADR).
+        `Promote the investigation at "${investigationPathForPrompt}" to an Architecture Decision Record (ADR).
 
 INSTRUCTIONS:
 1. Read the investigation file to understand the context, findings, and recommendations
-2. Create a new ADR file at "${normalizedAdrPath}/${adrFileName}" using the standard ADR template format:
+2. Create a new ADR file at "${adrPathForPrompt}/${adrFileName}" using the standard ADR template format:
    - Title: Clear decision title
    - Status: Accepted
    - Context: Summarize the problem/situation from the investigation
