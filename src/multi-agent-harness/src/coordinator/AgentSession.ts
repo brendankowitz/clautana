@@ -4,25 +4,17 @@ import {
   ChatMessage,
   AgentOutput,
   McpServerConfig,
-  SDKMessage,
 } from "./types";
 import {
   createExtensionMcpServer,
   getExtensionToolNames,
 } from "../mcp/ExtensionMcpServer";
-
-// Import Options type from SDK (will be used in sendPrompt)
-type SettingSource = "user" | "project" | "local";
-
-type Options = {
-  abortController?: AbortController;
-  cwd?: string;
-  allowedTools?: string[];
-  mcpServers?: Record<string, any>; // Use any for SDK compatibility
-  settingSources?: SettingSource[];
-  systemPrompt?: string;
-  [key: string]: any; // Allow additional properties
-};
+import {
+  AgentBackend,
+  BackendSession,
+  AgentMessage,
+  createBackend,
+} from "../backends";
 
 export interface AgentConfig {
   name: string;
@@ -36,19 +28,20 @@ export interface AgentConfig {
   initialStatus?: AgentStatus;
   outputChannel?: { appendLine: (value: string) => void };
   pathToClaudeCodeExecutable?: string;
+  backend?: AgentBackend; // Optional, will create default Claude backend if not provided
 }
 
 /**
- * AgentSession wraps the Claude Agent SDK for individual agent instances.
+ * AgentSession wraps AI backend for individual agent instances.
  *
  * Key responsibilities:
- * - Wraps @anthropic-ai/claude-agent-sdk query() function
+ * - Uses backend abstraction layer (Claude Agent SDK, Copilot SDK, etc.)
  * - Maintains conversation history (_messages)
  * - Tracks session ID, cost, and status
  * - Supports pause/resume with pending prompt queue
  * - Has injectNotification() for system messages that bypass pause
  * - Emits events: 'output', 'statusChanged', 'error'
- * - Processes SDK messages and extracts text, tool calls, results
+ * - Processes backend messages and extracts text, tool calls, results
  * - Builds system prompt with agent identity and multi-agent instructions
  */
 export class AgentSession extends EventEmitter {
@@ -62,10 +55,27 @@ export class AgentSession extends EventEmitter {
   private _currentTask?: string;
   private _tokensUsed = 0;
   private _waitingFor: string[] = [];
+  private _backend: AgentBackend;
+  private _backendSession?: BackendSession;
+  private _ownsBackend: boolean;
 
   constructor(private readonly config: AgentConfig) {
     super();
     this._status = config.initialStatus || "initializing";
+    
+    // Use provided backend or create a default Claude backend
+    if (config.backend) {
+      this._backend = config.backend;
+      this._ownsBackend = false;
+    } else {
+      this._backend = createBackend('claude', {
+        pathToClaudeCodeExecutable: config.pathToClaudeCodeExecutable,
+      });
+      this._ownsBackend = true;
+    }
+    
+    // Log which backend is being used
+    console.log(`[${this.config.name}] Using backend: ${this._backend.name} (${this._backend.type})`);
   }
 
   get name(): string {
@@ -140,51 +150,47 @@ export class AgentSession extends EventEmitter {
 
     this._abortController = new AbortController();
 
-    // Create extension MCP server with LSP, Mail, and Claims tools
-    const extensionMcpServer = await createExtensionMcpServer(this.config.name);
-
-    // Combine extension MCP server with any configured servers
-    const mcpServers = {
-      "vscode-extension": extensionMcpServer,
-      ...this.config.mcpServers,
-    };
-
-    // Allow all extension-provided tools without permission prompts
-    const extensionTools = getExtensionToolNames();
-    const allowedTools = [
-      ...extensionTools,
-      ...(this.config.allowedTools ?? []),
-    ];
-
-    const options: Options = {
-      cwd: this.config.workingDirectory,
-      allowedTools,
-      mcpServers,
-      settingSources: ["user", "project", "local"], // Load MCP servers from all sources
-      permissionMode: "acceptEdits", // Auto-accept file edits
-      systemPrompt: this.buildSystemPrompt(),
-      abortController: this._abortController,
-      pathToClaudeCodeExecutable: this.config.pathToClaudeCodeExecutable,
-      stderr: (data: string) => {
-        const line = `[${this.config.name} stderr] ${data}`;
-        if (this.config.outputChannel) {
-          this.config.outputChannel.appendLine(line);
-        }
-        console.error(line);
-      },
-    };
-
     try {
-      // Use dynamic import for ES module
-      const { query } = await import("@anthropic-ai/claude-agent-sdk");
+      // Create backend session if it doesn't exist
+      if (!this._backendSession) {
+        // Create extension MCP server with LSP, Mail, and Claims tools
+        const extensionMcpServer = await createExtensionMcpServer(this.config.name);
 
-      const result = query({
-        prompt,
-        options,
-      });
+        // Combine extension MCP server with any configured servers
+        const mcpServers = {
+          "vscode-extension": extensionMcpServer,
+          ...this.config.mcpServers,
+        };
 
-      for await (const message of result) {
-        const output = this.processMessage(message);
+        // Allow all extension-provided tools without permission prompts
+        const extensionTools = getExtensionToolNames();
+        const allowedTools = [
+          ...extensionTools,
+          ...(this.config.allowedTools ?? []),
+        ];
+
+        this._backendSession = await this._backend.createSession({
+          workingDirectory: this.config.workingDirectory,
+          systemPrompt: this.buildSystemPrompt(),
+          allowedTools,
+          mcpServers,
+          settingSources: ["user", "project", "local"],
+          permissionMode: "acceptEdits",
+          stderr: (data: string) => {
+            const line = `[${this.config.name} stderr] ${data}`;
+            if (this.config.outputChannel) {
+              this.config.outputChannel.appendLine(line);
+            }
+            console.error(line);
+          },
+        });
+      }
+
+      // Send prompt through backend session
+      for await (const message of this._backendSession.send(prompt, { 
+        abortController: this._abortController 
+      })) {
+        const output = this.processBackendMessage(message);
         if (output) {
           this.emit("output", output);
         }
@@ -269,8 +275,20 @@ export class AgentSession extends EventEmitter {
   /**
    * Dispose of all resources
    */
-  dispose(): void {
+  async dispose(): Promise<void> {
     this.stop();
+    
+    // Destroy backend session
+    if (this._backendSession) {
+      await this._backendSession.destroy();
+      this._backendSession = undefined;
+    }
+    
+    // Dispose backend if we own it
+    if (this._ownsBackend) {
+      await this._backend.dispose();
+    }
+    
     this.removeAllListeners();
   }
 
@@ -345,95 +363,94 @@ IMPORTANT: When you complete your task:
   }
 
   /**
-   * Process SDK messages and extract text, tool calls, and results.
+   * Process backend messages and extract text, tool calls, and results.
    * Returns AgentOutput objects that get emitted as events.
    */
-  private processMessage(message: any): AgentOutput | null {
-    // Filter for message types we care about
-    if (message.type !== "assistant" && message.type !== "result") {
-      // Log ignored message types for debugging
-      if (this.config.outputChannel && message.type) {
-        this.config.outputChannel.appendLine(`[${this.config.name}] Ignoring message type: ${message.type}`);
-      }
-      return null;
-    }
-
-    const sdkMessage = message as SDKMessage;
-
+  private processBackendMessage(message: AgentMessage): AgentOutput | null {
     try {
-      switch (sdkMessage.type) {
-        case "assistant":
-          // Add null safety checks
-          if (!sdkMessage.message?.content) {
+      switch (message.type) {
+        case "text":
+          if (!message.content) {
             if (this.config.outputChannel) {
-              this.config.outputChannel.appendLine(`[${this.config.name}] Warning: Assistant message has no content`);
+              this.config.outputChannel.appendLine(`[${this.config.name}] Warning: Text message has no content`);
             }
             return null;
           }
 
-          for (const block of sdkMessage.message.content) {
-            // Validate text blocks
-            if (block.type === "text") {
-              if (!block.text) {
-                if (this.config.outputChannel) {
-                  this.config.outputChannel.appendLine(`[${this.config.name}] Warning: Text block is empty`);
-                }
-                continue;
-              }
+          const chatMsg: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: message.content,
+            timestamp: new Date(),
+          };
+          this._messages.push(chatMsg);
+          return { type: "text", content: message.content };
 
-              const chatMsg: ChatMessage = {
-                id: crypto.randomUUID(),
-                role: "assistant",
-                content: block.text,
-                timestamp: new Date(),
-              };
-              this._messages.push(chatMsg);
-              return { type: "text", content: block.text };
+        case "toolCall":
+          if (!message.toolCall) {
+            if (this.config.outputChannel) {
+              this.config.outputChannel.appendLine(`[${this.config.name}] Warning: Tool call message missing toolCall data`);
             }
-
-            // Validate tool use blocks
-            if (block.type === "tool_use") {
-              if (!block.id || !block.name) {
-                if (this.config.outputChannel) {
-                  this.config.outputChannel.appendLine(`[${this.config.name}] Warning: Tool use block missing id or name`);
-                }
-                continue;
-              }
-
-              const chatMsg: ChatMessage = {
-                id: crypto.randomUUID(),
-                role: "tool",
-                content: `Using ${block.name}`,
-                timestamp: new Date(),
-                toolCall: {
-                  id: block.id,
-                  name: block.name,
-                  arguments: block.input ?? {},
-                },
-              };
-              this._messages.push(chatMsg);
-              return {
-                type: "toolCall",
-                id: block.id,
-                name: block.name,
-                arguments: block.input ?? {},
-              };
-            }
+            return null;
           }
-          break;
 
-        case "result":
-          if (sdkMessage.session_id) {
-            this._sessionId = sdkMessage.session_id;
+          const toolMsg: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "tool",
+            content: `Using ${message.toolCall.name}`,
+            timestamp: new Date(),
+            toolCall: {
+              id: message.toolCall.id,
+              name: message.toolCall.name,
+              arguments: message.toolCall.arguments,
+            },
+          };
+          this._messages.push(toolMsg);
+          return {
+            type: "toolCall",
+            id: message.toolCall.id,
+            name: message.toolCall.name,
+            arguments: message.toolCall.arguments,
+          };
+
+        case "complete":
+          if (message.sessionId) {
+            this._sessionId = message.sessionId;
           }
-          this._costUsd += sdkMessage.total_cost_usd ?? 0;
+          if (message.costUsd !== undefined) {
+            this._costUsd += message.costUsd;
+          }
           return {
             type: "complete",
-            result: sdkMessage.result,
-            sessionId: sdkMessage.session_id,
-            costUsd: sdkMessage.total_cost_usd,
-            durationMs: sdkMessage.duration_ms,
+            result: message.result,
+            sessionId: message.sessionId,
+            costUsd: message.costUsd,
+            durationMs: message.durationMs,
           };
+
+        case "error":
+          const error = message.error || new Error("Unknown backend error");
+          if (this.config.outputChannel) {
+            this.config.outputChannel.appendLine(`[${this.config.name}] Backend error: ${error.message}`);
+          }
+          console.error(`[${this.config.name}] Backend error:`, error);
+          this.emit("error", error);
+          return null;
+
+        case "toolResult":
+          // Tool results are handled internally by the backend
+          // We don't need to emit them as output
+          if (this.config.outputChannel) {
+            this.config.outputChannel.appendLine(`[${this.config.name}] Received tool result`);
+          }
+          return null;
+
+        default:
+          // Log ignored message types for debugging
+          if (this.config.outputChannel) {
+            this.config.outputChannel.appendLine(`[${this.config.name}] Ignoring message type: ${(message as any).type}`);
+          }
+          return null;
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

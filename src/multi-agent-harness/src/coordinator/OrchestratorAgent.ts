@@ -3,27 +3,7 @@ import { EventEmitter } from "events";
 import { AgentPool } from "./AgentPool";
 import { OrchestratorMessage } from "./types";
 import { generateUniqueAgentName } from "../utils/agentNaming";
-
-// Define local types for SDK (will use dynamic import for the actual SDK functions)
-type SettingSource = "user" | "project" | "local";
-
-type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk';
-
-type Options = {
-  abortController?: AbortController;
-  cwd?: string;
-  model?: string;
-  allowedTools?: string[];
-  permissionMode?: PermissionMode;
-  mcpServers?: Record<string, any>; // Use any for SDK compatibility
-  settingSources?: SettingSource[];
-  systemPrompt?: string;
-  stderr?: (data: string) => void;
-  [key: string]: any; // Allow additional properties
-};
-
-type SDKMessage = any; // Will be from the SDK
-type Query = AsyncGenerator<SDKMessage, void>;
+import { AgentBackend, BackendSession, AgentMessage } from "../backends";
 
 /**
  * Map model tier names to actual model IDs
@@ -379,6 +359,8 @@ export class OrchestratorAgent extends EventEmitter {
   private workItemWatcherInitialized = false;
   private _contextTokens = 0;
   private _maxContextTokens = 200000; // Sonnet 4 context window
+  private _backend?: AgentBackend;
+  private _backendSession?: BackendSession;
 
   constructor(
     _context: vscode.ExtensionContext,
@@ -400,6 +382,27 @@ export class OrchestratorAgent extends EventEmitter {
    */
   private estimateTokens(text: string): number {
     return Math.ceil(text.length / 4);
+  }
+
+  /**
+   * Get or create the backend instance
+   */
+  private async getBackend(): Promise<AgentBackend> {
+    if (!this._backend) {
+      console.log(`[Orchestrator] Creating Claude backend`);
+      const { ClaudeAgentBackend } = await import('../backends/claude/ClaudeAgentBackend');
+      
+      // Get path to Claude executable if configured
+      const config = vscode.workspace.getConfiguration("clautana");
+      const pathToClaudeCodeExecutable = config.get<string>("pathToClaudeCodeExecutable");
+      
+      this._backend = new ClaudeAgentBackend({
+        pathToClaudeCodeExecutable,
+      });
+      
+      console.log(`[Orchestrator] Using backend: ${this._backend.name} (${this._backend.type})`);
+    }
+    return this._backend;
   }
 
   /**
@@ -487,8 +490,9 @@ export class OrchestratorAgent extends EventEmitter {
     const model = getModelId(modelTier);
 
     try {
-      // Dynamic import for ES module SDK
-      const { query, createSdkMcpServer } = await import("@anthropic-ai/claude-agent-sdk");
+      // Dynamic import for ES module SDK (still needed for createSdkMcpServer and tools)
+      // TODO: Consider migrating MCP server creation to backend abstraction in Phase 2
+      const { createSdkMcpServer } = await import("@anthropic-ai/claude-agent-sdk");
       const { createMemoryMcpTools } = await import("../mcp/MemoryMcpServer");
       const { createMailMcpTools } = await import("../mcp/MailMcpServer");
 
@@ -510,7 +514,11 @@ export class OrchestratorAgent extends EventEmitter {
         ...this.getMcpServers(),
       };
 
-      this.outputChannel.appendLine(`Starting orchestrator with model: ${model}`);
+      // Get backend instance
+      const backend = await this.getBackend();
+
+      this.outputChannel.appendLine(`Starting orchestrator with backend: ${backend.name} (${backend.type})`);
+      this.outputChannel.appendLine(`Model: ${model}`);
       this.outputChannel.appendLine(`Working directory: ${this.getWorkingDirectory()}`);
       this.outputChannel.appendLine(`Queue depth: ${this._messageQueue.length}`);
 
@@ -553,33 +561,34 @@ export class OrchestratorAgent extends EventEmitter {
         'mcp__orchestrator-tools__archived_messages',
       ];
 
-      const options: Options = {
-        model,
-        cwd: this.getWorkingDirectory(),
-        systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT.replace(
-          "{workingDirectory}",
-          this.getWorkingDirectory()
-        ),
-        mcpServers,
-        allowedTools,
-        permissionMode: 'acceptEdits',
-        abortController: this._abortController = new AbortController(),
-        settingSources: ['user'],
-        // Resume the session if we have one (enables multi-turn conversation)
-        ...(this._sessionId && { resume: this._sessionId }),
-        stderr: (data: string) => {
-          this.outputChannel.appendLine(`[Claude Code stderr] ${data}`);
-        },
-      };
+      // Create or reuse backend session
+      if (!this._backendSession) {
+        this._backendSession = await backend.createSession({
+          workingDirectory: this.getWorkingDirectory(),
+          systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT.replace(
+            "{workingDirectory}",
+            this.getWorkingDirectory()
+          ),
+          model,
+          mcpServers,
+          allowedTools,
+          permissionMode: 'acceptEdits',
+          settingSources: ['user'],
+          stderr: (data: string) => {
+            this.outputChannel.appendLine(`[Claude Backend stderr] ${data}`);
+          },
+        });
+        this.outputChannel.appendLine(`[Orchestrator] Created new backend session: ${this._backendSession.id}`);
+      }
 
-      const result: Query = query({
-        prompt: task,
-        options,
-      });
+      // Create abort controller for this task
+      this._abortController = new AbortController();
 
-      // Process messages as they stream in
-      for await (const message of result) {
-        await this.processOrchestratorMessage(message);
+      // Send prompt and process messages as they stream in
+      for await (const message of this._backendSession.send(task, { 
+        abortController: this._abortController 
+      })) {
+        await this.processBackendMessage(message);
       }
 
       this.isProcessing = false;
@@ -618,51 +627,68 @@ export class OrchestratorAgent extends EventEmitter {
   }
 
   /**
-   * Process a message from the Claude Agent SDK
+   * Process a message from the backend abstraction layer
    */
-  private async processOrchestratorMessage(message: SDKMessage): Promise<void> {
+  private async processBackendMessage(message: AgentMessage): Promise<void> {
     try {
-      // Handle assistant messages
-      if (message.type === "assistant") {
-        // Add null safety check
-        if (!message.message?.content) {
-          this.outputChannel.appendLine("Warning: Assistant message has no content");
-          return;
-        }
+      this.outputChannel.appendLine(`[Orchestrator][${message._backend}] Received: ${message.type}`);
 
-        const content = message.message.content;
-        for (const block of content) {
-          if (block.type === "text" && block.text) {
+      switch (message.type) {
+        case 'text':
+          if (message.content) {
             this._messages.push({
               id: crypto.randomUUID(),
               role: "assistant",
-              content: block.text,
+              content: message.content,
               timestamp: new Date(),
             });
 
             // Track token usage for context indicator
-            this._contextTokens += this.estimateTokens(block.text);
+            this._contextTokens += this.estimateTokens(message.content);
             this.emit("contextUsageChanged", this.contextUsage);
 
             this.emit("message", this._messages[this._messages.length - 1]);
           }
+          break;
 
-          if (block.type === "tool_use") {
+        case 'toolCall':
+          if (message.toolCall) {
             // Tool calls are handled by MCP server, but we can log them
             this.outputChannel.appendLine(
-              `Tool call: ${block.name ?? 'unknown'} ${JSON.stringify(block.input ?? {})}`
+              `Tool call: ${message.toolCall.name} ${JSON.stringify(message.toolCall.arguments)}`
             );
           }
-        }
-      }
+          break;
 
-      // Handle result messages
-      if (message.type === "result") {
-        this._sessionId = message.session_id;
+        case 'complete':
+          // Store session ID for resuming conversation
+          if (message.sessionId) {
+            this._sessionId = message.sessionId;
+          }
+          
+          // Log completion info
+          if (message.costUsd !== undefined) {
+            this.outputChannel.appendLine(`[Orchestrator] Cost: $${message.costUsd.toFixed(4)}`);
+          }
+          if (message.durationMs !== undefined) {
+            this.outputChannel.appendLine(`[Orchestrator] Duration: ${message.durationMs}ms`);
+          }
+          break;
+
+        case 'error':
+          if (message.error) {
+            this.outputChannel.appendLine(`[Orchestrator] Error: ${message.error.message}`);
+            this.emit("error", message.error);
+          }
+          break;
+
+        default:
+          this.outputChannel.appendLine(`[Orchestrator] Ignoring message type: ${message.type}`);
+          break;
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      this.outputChannel.appendLine(`Error processing orchestrator message: ${errorMessage}`);
+      this.outputChannel.appendLine(`Error processing backend message: ${errorMessage}`);
       this.emit("error", error);
     }
   }
@@ -670,6 +696,11 @@ export class OrchestratorAgent extends EventEmitter {
 
   /**
    * Get the MCP tools available to the orchestrator
+   * 
+   * TODO: These tools are defined using Claude SDK's tool() helper.
+   * Consider migrating to ToolDefinition from backend abstraction in Phase 2
+   * for full backend portability. For now, keeping Claude-specific implementation
+   * since the orchestrator tools are complex and MCP is primarily Claude-centric.
    */
   private async getOrchestratorMcpTools(): Promise<any[]> {
     // Import zod for schema definition
@@ -1492,8 +1523,14 @@ When done, move the item to 'done' if approved, or back to 'doing' with notes if
   /**
    * Stop the orchestrator and clear the queue
    */
-  stop(): void {
+  async stop(): Promise<void> {
     this._abortController?.abort();
+    
+    // Abort backend session if active
+    if (this._backendSession) {
+      await this._backendSession.abort();
+    }
+    
     this.clearQueue();
     this.isProcessing = false;
     this._isProcessingQueue = false;
@@ -1503,8 +1540,21 @@ When done, move the item to 'done' if approved, or back to 'doing' with notes if
   /**
    * Dispose of all resources
    */
-  dispose(): void {
-    this.stop();
+  async dispose(): Promise<void> {
+    await this.stop();
+    
+    // Destroy backend session
+    if (this._backendSession) {
+      await this._backendSession.destroy();
+      this._backendSession = undefined;
+    }
+    
+    // Dispose backend
+    if (this._backend) {
+      await this._backend.dispose();
+      this._backend = undefined;
+    }
+    
     this._abortController = undefined;
     this.removeAllListeners();
     this.outputChannel.dispose();
