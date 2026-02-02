@@ -1,3 +1,4 @@
+import * as vscode from "vscode";
 import { EventEmitter } from "events";
 import {
   AgentStatus,
@@ -8,12 +9,14 @@ import {
 import {
   createExtensionMcpServer,
   getExtensionToolNames,
+  createExtensionToolDefinitions,
 } from "../mcp/ExtensionMcpServer";
 import {
   AgentBackend,
   BackendSession,
   AgentMessage,
   createBackend,
+  autoDetectBackend,
 } from "../backends";
 
 export interface AgentConfig {
@@ -28,7 +31,8 @@ export interface AgentConfig {
   initialStatus?: AgentStatus;
   outputChannel?: { appendLine: (value: string) => void };
   pathToClaudeCodeExecutable?: string;
-  backend?: AgentBackend; // Optional, will create default Claude backend if not provided
+  backend?: AgentBackend; // Optional, will create backend based on config if not provided
+  model?: string; // Model to use (e.g., 'sonnet', 'opus', 'haiku')
 }
 
 /**
@@ -63,12 +67,21 @@ export class AgentSession extends EventEmitter {
     super();
     this._status = config.initialStatus || "initializing";
     
-    // Use provided backend or create a default Claude backend
+    // Use provided backend or create one based on configuration
     if (config.backend) {
       this._backend = config.backend;
       this._ownsBackend = false;
     } else {
-      this._backend = createBackend('claude', {
+      // Read backend type from VS Code configuration
+      const vsConfig = vscode.workspace.getConfiguration("clautana");
+      const backendSetting = vsConfig.get<string>("backend") ?? "auto";
+      
+      // Resolve "auto" to actual backend type
+      const backendType = backendSetting === "auto" ? autoDetectBackend() : backendSetting;
+      
+      console.log(`[${this.config.name}] Backend setting: ${backendSetting}${backendSetting === "auto" ? ` (resolved to ${backendType})` : ""}`);
+      
+      this._backend = createBackend(backendType as 'claude' | 'copilot', {
         pathToClaudeCodeExecutable: config.pathToClaudeCodeExecutable,
       });
       this._ownsBackend = true;
@@ -127,6 +140,20 @@ export class AgentSession extends EventEmitter {
   }
 
   /**
+   * Get the backend type (claude or copilot)
+   */
+  get backendType(): string {
+    return this._backend?.type ?? 'unknown';
+  }
+
+  /**
+   * Get the model being used
+   */
+  get model(): string {
+    return this.config.model ?? 'default';
+  }
+
+  /**
    * Send a prompt to the agent. If the agent is paused, the prompt will be queued.
    */
   async sendPrompt(prompt: string): Promise<void> {
@@ -153,27 +180,47 @@ export class AgentSession extends EventEmitter {
     try {
       // Create backend session if it doesn't exist
       if (!this._backendSession) {
-        // Create extension MCP server with LSP, Mail, and Claims tools
-        const extensionMcpServer = await createExtensionMcpServer(this.config.name);
+        const backendType = this._backend.type;
+        
+        let mcpServers: Record<string, unknown> | undefined;
+        let tools: unknown[] | undefined;
+        let allowedTools: string[];
 
-        // Combine extension MCP server with any configured servers
-        const mcpServers = {
-          "vscode-extension": extensionMcpServer,
-          ...this.config.mcpServers,
-        };
+        if (backendType === 'claude') {
+          // Claude backend: Use MCP servers
+          const extensionMcpServer = await createExtensionMcpServer(this.config.name);
 
-        // Allow all extension-provided tools without permission prompts
-        const extensionTools = getExtensionToolNames();
-        const allowedTools = [
-          ...extensionTools,
-          ...(this.config.allowedTools ?? []),
-        ];
+          // Combine extension MCP server with any configured servers
+          mcpServers = {
+            "vscode-extension": extensionMcpServer,
+            ...this.config.mcpServers,
+          };
+
+          // Allow all extension-provided tools without permission prompts
+          const extensionTools = getExtensionToolNames();
+          allowedTools = [
+            ...extensionTools,
+            ...(this.config.allowedTools ?? []),
+          ];
+        } else {
+          // Copilot backend: Use direct tools
+          tools = await createExtensionToolDefinitions(this.config.name);
+          allowedTools = (tools as any[]).map(t => t.name);
+          
+          if (this.config.outputChannel) {
+            this.config.outputChannel.appendLine(
+              `[${this.config.name}] Copilot backend: loaded ${(tools as any[]).length} tools directly`
+            );
+          }
+        }
 
         this._backendSession = await this._backend.createSession({
           workingDirectory: this.config.workingDirectory,
           systemPrompt: this.buildSystemPrompt(),
+          model: this.config.model,
           allowedTools,
           mcpServers,
+          tools: tools as any,
           settingSources: ["user", "project", "local"],
           permissionMode: "acceptEdits",
           stderr: (data: string) => {

@@ -7,14 +7,23 @@ import { AgentBackend, BackendSession, AgentMessage } from "../backends";
 
 /**
  * Map model tier names to actual model IDs
+ * 
+ * The backend's createSession will handle backend-specific model mapping.
+ * This function just normalizes common tier names to a standard format.
+ * 
+ * For Claude: these are passed directly to the SDK
+ * For Copilot: CopilotBackend.mapModelName() further translates these
  */
 function getModelId(tier: string): string {
+  // Normalize common tier names to full model IDs
+  // Both backends understand these formats
   const modelMap: Record<string, string> = {
     'opus': 'claude-opus-4-20250514',
     'sonnet': 'claude-sonnet-4-20250514',
     'haiku': 'claude-haiku-3-20250514',
   };
-  return modelMap[tier] || modelMap['sonnet'];
+  // Return the tier as-is if not found (allows custom model IDs)
+  return modelMap[tier] || tier;
 }
 
 /**
@@ -152,14 +161,20 @@ list_workitems(status="todo") → WI-001 (API), WI-002 (UI needs API), WI-003 (T
 DO NOT spawn agents sequentially when they could run in parallel.
 DO analyze dependencies to avoid wasted work or conflicts.
 
-## CRITICAL: USE ONLY MCP TOOLS
+## CRITICAL: DELEGATE - DO NOT DO THE WORK YOURSELF
 
-You MUST use the MCP tools provided (mcp__orchestrator-tools__*), NOT built-in Claude Code tools.
-- Use spawn_agent (NOT Task tool) to create agents
-- Use create_workitem (NOT TodoWrite) to create User Stories
-- Use memory_save_fact (NOT any other memory tool) to save learnings
+**YOU ARE A MANAGER, NOT A DEVELOPER.** Your job is to:
+1. Break down work into User Stories
+2. Spawn specialist agents to do the actual coding
+3. Monitor progress and provide guidance
+4. Coordinate between agents
 
-NEVER use: Task, TodoWrite, or other built-in tools. Always use the orchestrator-tools MCP equivalents.
+**NEVER write code yourself.** If you find yourself about to write code, STOP and spawn an agent instead.
+**NEVER use file editing tools directly.** Spawn an agent to do that work.
+**NEVER run tests yourself.** Spawn a testing agent.
+
+Your tools are for MANAGEMENT: spawn_agent, create_workitem, list_workitems, message_agent, etc.
+Specialist agents have the coding tools. You delegate to them.
 
 ## WORK HIERARCHY
 
@@ -361,6 +376,7 @@ export class OrchestratorAgent extends EventEmitter {
   private _maxContextTokens = 200000; // Sonnet 4 context window
   private _backend?: AgentBackend;
   private _backendSession?: BackendSession;
+  private _configChangeDisposable?: vscode.Disposable;
 
   constructor(
     _context: vscode.ExtensionContext,
@@ -368,6 +384,50 @@ export class OrchestratorAgent extends EventEmitter {
   ) {
     super();
     this.outputChannel = vscode.window.createOutputChannel("Multi-Agent Orchestrator");
+    
+    // Listen for configuration changes to reset backend when settings change
+    this._configChangeDisposable = vscode.workspace.onDidChangeConfiguration(async (e) => {
+      if (e.affectsConfiguration("clautana.backend")) {
+        const config = vscode.workspace.getConfiguration("clautana");
+        const newBackend = config.get<string>("backend") ?? "auto";
+        console.log(`[Orchestrator] Backend setting changed to: ${newBackend}`);
+        this.outputChannel.appendLine(`[Orchestrator] Backend setting changed to: ${newBackend}`);
+        
+        // Reset backend so it will be recreated with new setting on next use
+        await this.resetBackend();
+        
+        vscode.window.showInformationMessage(
+          `Clautana backend changed to "${newBackend}". The new backend will be used for subsequent tasks.`
+        );
+      }
+    });
+  }
+
+  /**
+   * Reset backend and session to pick up new configuration
+   */
+  private async resetBackend(): Promise<void> {
+    // Destroy existing session
+    if (this._backendSession) {
+      try {
+        await this._backendSession.destroy();
+      } catch (e) {
+        console.error("[Orchestrator] Error destroying session during reset:", e);
+      }
+      this._backendSession = undefined;
+    }
+    
+    // Dispose existing backend
+    if (this._backend) {
+      try {
+        await this._backend.dispose();
+      } catch (e) {
+        console.error("[Orchestrator] Error disposing backend during reset:", e);
+      }
+      this._backend = undefined;
+    }
+    
+    this.outputChannel.appendLine("[Orchestrator] Backend reset - will use new settings on next task");
   }
 
   /**
@@ -385,21 +445,56 @@ export class OrchestratorAgent extends EventEmitter {
   }
 
   /**
-   * Get or create the backend instance
+   * Get or create the backend instance based on configuration
    */
   private async getBackend(): Promise<AgentBackend> {
     if (!this._backend) {
-      console.log(`[Orchestrator] Creating Claude backend`);
-      const { ClaudeAgentBackend } = await import('../backends/claude/ClaudeAgentBackend');
-      
-      // Get path to Claude executable if configured
       const config = vscode.workspace.getConfiguration("clautana");
-      const pathToClaudeCodeExecutable = config.get<string>("pathToClaudeCodeExecutable");
+      const backendSetting = config.get<string>("backend");
+      const rawValue = config.inspect<string>("backend");
       
-      this._backend = new ClaudeAgentBackend({
-        pathToClaudeCodeExecutable,
-      });
+      // Log all possible values for debugging
+      this.outputChannel.appendLine(`[DEBUG] Backend config inspection:`);
+      this.outputChannel.appendLine(`  - get("backend") = "${backendSetting}" (type: ${typeof backendSetting})`);
+      this.outputChannel.appendLine(`  - defaultValue = "${rawValue?.defaultValue}"`);
+      this.outputChannel.appendLine(`  - globalValue = "${rawValue?.globalValue}"`);
+      this.outputChannel.appendLine(`  - workspaceValue = "${rawValue?.workspaceValue}"`);
+      this.outputChannel.appendLine(`  - workspaceFolderValue = "${rawValue?.workspaceFolderValue}"`);
       
+      const effectiveSetting = backendSetting ?? "auto";
+      this.outputChannel.appendLine(`  - effectiveSetting = "${effectiveSetting}"`);
+      
+      console.log(`[Orchestrator] Backend setting: ${effectiveSetting}`);
+      
+      if (effectiveSetting === "auto") {
+        // Auto-detect based on installed CLIs
+        const { autoDetectBackend } = await import('../backends/BackendFactory');
+        const detectedType = autoDetectBackend();
+        this.outputChannel.appendLine(`[DEBUG] Auto-detected backend: ${detectedType}`);
+        console.log(`[Orchestrator] Auto-detected backend: ${detectedType}`);
+        
+        if (detectedType === "copilot") {
+          const { CopilotBackend } = await import('../backends/copilot/CopilotBackend');
+          this._backend = new CopilotBackend({});
+        } else {
+          const { ClaudeAgentBackend } = await import('../backends/claude/ClaudeAgentBackend');
+          const pathToClaudeCodeExecutable = config.get<string>("pathToClaudeCodeExecutable");
+          this._backend = new ClaudeAgentBackend({ pathToClaudeCodeExecutable });
+        }
+      } else if (effectiveSetting === "copilot") {
+        this.outputChannel.appendLine(`[DEBUG] Creating CopilotBackend (explicit setting)`);
+        const { CopilotBackend } = await import('../backends/copilot/CopilotBackend');
+        const pathToCopilotExecutable = config.get<string>("pathToCopilotExecutable");
+        this._backend = new CopilotBackend({ pathToCopilotExecutable });
+      } else {
+        // Default to Claude
+        this.outputChannel.appendLine(`[DEBUG] Creating ClaudeAgentBackend (setting="${effectiveSetting}")`);
+        const { ClaudeAgentBackend } = await import('../backends/claude/ClaudeAgentBackend');
+        const pathToClaudeCodeExecutable = config.get<string>("pathToClaudeCodeExecutable");
+        this._backend = new ClaudeAgentBackend({ pathToClaudeCodeExecutable });
+      }
+      
+      this.outputChannel.appendLine(`[DEBUG] Created backend: ${this._backend.name} (${this._backend.type})`);
       console.log(`[Orchestrator] Using backend: ${this._backend.name} (${this._backend.type})`);
     }
     return this._backend;
@@ -490,76 +585,98 @@ export class OrchestratorAgent extends EventEmitter {
     const model = getModelId(modelTier);
 
     try {
-      // Dynamic import for ES module SDK (still needed for createSdkMcpServer and tools)
-      // TODO: Consider migrating MCP server creation to backend abstraction in Phase 2
-      const { createSdkMcpServer } = await import("@anthropic-ai/claude-agent-sdk");
-      const { createMemoryMcpTools } = await import("../mcp/MemoryMcpServer");
-      const { createMailMcpTools } = await import("../mcp/MailMcpServer");
-
-      // Get orchestrator tools, memory tools, and mail tools
-      const orchestratorTools = await this.getOrchestratorMcpTools();
-      const memoryTools = await createMemoryMcpTools();
-      const mailTools = await createMailMcpTools("orchestrator");
-
-      // Create MCP server for custom orchestrator tools (includes memory and mail)
-      const orchestratorMcpServer = createSdkMcpServer({
-        name: "orchestrator-tools",
-        version: "1.0.0",
-        tools: [...orchestratorTools, ...memoryTools, ...mailTools],
-      });
-
-      // Merge with user-configured MCP servers
-      const mcpServers = {
-        "orchestrator-tools": orchestratorMcpServer,
-        ...this.getMcpServers(),
-      };
-
-      // Get backend instance
+      // Get backend instance FIRST to determine backend type
       const backend = await this.getBackend();
-
-      this.outputChannel.appendLine(`Starting orchestrator with backend: ${backend.name} (${backend.type})`);
+      const backendType = backend.type;
+      
+      this.outputChannel.appendLine(`Starting orchestrator with backend: ${backend.name} (${backendType})`);
       this.outputChannel.appendLine(`Model: ${model}`);
       this.outputChannel.appendLine(`Working directory: ${this.getWorkingDirectory()}`);
       this.outputChannel.appendLine(`Queue depth: ${this._messageQueue.length}`);
 
-      // Allow all orchestrator MCP tools without permission prompts
-      const allowedTools = [
-        // Agent management
-        'mcp__orchestrator-tools__spawn_agent',
-        'mcp__orchestrator-tools__destroy_agent',
-        'mcp__orchestrator-tools__message_agent',
-        'mcp__orchestrator-tools__get_agent_status',
-        'mcp__orchestrator-tools__report_to_user',
-        // User Stories (Kanban)
-        'mcp__orchestrator-tools__create_workitem',
-        'mcp__orchestrator-tools__list_workitems',
-        'mcp__orchestrator-tools__assign_workitem',
-        'mcp__orchestrator-tools__move_workitem',
-        // Team Manager proactive tools
-        'mcp__orchestrator-tools__get_unassigned_todo_items',
-        'mcp__orchestrator-tools__spawn_agents_for_items',
-        'mcp__orchestrator-tools__get_team_status',
-        'mcp__orchestrator-tools__validate_agent_assignments',
-        // Memory & Learning
-        'mcp__orchestrator-tools__memory_search_playbooks',
-        'mcp__orchestrator-tools__memory_get_playbook',
-        'mcp__orchestrator-tools__memory_save_playbook',
-        'mcp__orchestrator-tools__memory_search_facts',
-        'mcp__orchestrator-tools__memory_save_fact',
-        'mcp__orchestrator-tools__memory_search_sessions',
-        'mcp__orchestrator-tools__memory_get_recent_sessions',
-        'mcp__orchestrator-tools__memory_record_lesson',
-        // Mail tools
-        'mcp__orchestrator-tools__inbox',
-        'mcp__orchestrator-tools__read_message',
-        'mcp__orchestrator-tools__mark_message_read',
-        'mcp__orchestrator-tools__send_message',
-        'mcp__orchestrator-tools__sent_messages',
-        'mcp__orchestrator-tools__delete_message',
-        'mcp__orchestrator-tools__reply_to_message',
-        'mcp__orchestrator-tools__archive_message',
-        'mcp__orchestrator-tools__archived_messages',
-      ];
+      // Build session configuration based on backend type
+      let mcpServers: Record<string, unknown> = {};
+      let allowedTools: string[] = [];
+      let tools: unknown[] | undefined;
+
+      if (backendType === 'claude') {
+        // Claude backend: Use MCP servers with Claude SDK tools
+        const { createSdkMcpServer } = await import("@anthropic-ai/claude-agent-sdk");
+        const { createMemoryMcpTools } = await import("../mcp/MemoryMcpServer");
+        const { createMailMcpTools } = await import("../mcp/MailMcpServer");
+
+        // Get orchestrator tools, memory tools, and mail tools (Claude format)
+        const orchestratorTools = await this.getOrchestratorMcpTools();
+        const memoryTools = await createMemoryMcpTools();
+        const mailTools = await createMailMcpTools("orchestrator");
+
+        // Create MCP server for custom orchestrator tools
+        const orchestratorMcpServer = createSdkMcpServer({
+          name: "orchestrator-tools",
+          version: "1.0.0",
+          tools: [...orchestratorTools, ...memoryTools, ...mailTools],
+        });
+
+        // Merge with user-configured MCP servers
+        mcpServers = {
+          "orchestrator-tools": orchestratorMcpServer,
+          ...this.getMcpServers(),
+        };
+
+        // Allow all orchestrator MCP tools without permission prompts
+        allowedTools = [
+          // Agent management
+          'mcp__orchestrator-tools__spawn_agent',
+          'mcp__orchestrator-tools__destroy_agent',
+          'mcp__orchestrator-tools__message_agent',
+          'mcp__orchestrator-tools__get_agent_status',
+          'mcp__orchestrator-tools__report_to_user',
+          // User Stories (Kanban)
+          'mcp__orchestrator-tools__create_workitem',
+          'mcp__orchestrator-tools__list_workitems',
+          'mcp__orchestrator-tools__assign_workitem',
+          'mcp__orchestrator-tools__move_workitem',
+          // Team Manager proactive tools
+          'mcp__orchestrator-tools__get_unassigned_todo_items',
+          'mcp__orchestrator-tools__spawn_agents_for_items',
+          'mcp__orchestrator-tools__get_team_status',
+          'mcp__orchestrator-tools__validate_agent_assignments',
+          // Memory & Learning
+          'mcp__orchestrator-tools__memory_search_playbooks',
+          'mcp__orchestrator-tools__memory_get_playbook',
+          'mcp__orchestrator-tools__memory_save_playbook',
+          'mcp__orchestrator-tools__memory_search_facts',
+          'mcp__orchestrator-tools__memory_save_fact',
+          'mcp__orchestrator-tools__memory_search_sessions',
+          'mcp__orchestrator-tools__memory_get_recent_sessions',
+          'mcp__orchestrator-tools__memory_record_lesson',
+          // Mail tools
+          'mcp__orchestrator-tools__inbox',
+          'mcp__orchestrator-tools__read_message',
+          'mcp__orchestrator-tools__mark_message_read',
+          'mcp__orchestrator-tools__send_message',
+          'mcp__orchestrator-tools__sent_messages',
+          'mcp__orchestrator-tools__delete_message',
+          'mcp__orchestrator-tools__reply_to_message',
+          'mcp__orchestrator-tools__archive_message',
+          'mcp__orchestrator-tools__archived_messages',
+        ];
+      } else {
+        // Copilot backend: Tools are passed directly, MCP not supported
+        // Get tools in ToolDefinition format for Copilot
+        const orchestratorToolDefs = await this.getOrchestratorToolDefinitions();
+        const { createMemoryToolDefinitions } = await import("../mcp/MemoryMcpServer");
+        const { createMailToolDefinitions } = await import("../mcp/MailMcpServer");
+        
+        const memoryToolDefs = await createMemoryToolDefinitions();
+        const mailToolDefs = await createMailToolDefinitions("orchestrator");
+        
+        tools = [...orchestratorToolDefs, ...memoryToolDefs, ...mailToolDefs];
+        allowedTools = (tools as any[]).map(t => t.name);
+        
+        this.outputChannel.appendLine(`[Copilot Backend] Loaded ${(tools as any[]).length} tools directly (MCP not supported)`);
+        this.outputChannel.appendLine(`[Copilot Backend] Note: Some advanced orchestrator features may be limited`);
+      }
 
       // Create or reuse backend session
       if (!this._backendSession) {
@@ -570,12 +687,13 @@ export class OrchestratorAgent extends EventEmitter {
             this.getWorkingDirectory()
           ),
           model,
-          mcpServers,
+          mcpServers: Object.keys(mcpServers).length > 0 ? mcpServers : undefined,
+          tools: tools as any,
           allowedTools,
           permissionMode: 'acceptEdits',
           settingSources: ['user'],
           stderr: (data: string) => {
-            this.outputChannel.appendLine(`[Claude Backend stderr] ${data}`);
+            this.outputChannel.appendLine(`[${backendType} stderr] ${data}`);
           },
         });
         this.outputChannel.appendLine(`[Orchestrator] Created new backend session: ${this._backendSession.id}`);
@@ -1367,6 +1485,378 @@ export class OrchestratorAgent extends EventEmitter {
   }
 
   /**
+   * Get orchestrator tools in ToolDefinition format for Copilot backend.
+   * 
+   * This is a simplified version of getOrchestratorMcpTools() that returns
+   * tools in the backend-agnostic ToolDefinition format.
+   * 
+   * Note: Copilot backend has limited tool support compared to Claude's MCP.
+   * Some advanced orchestrator features may not work as expected.
+   */
+  private async getOrchestratorToolDefinitions(): Promise<any[]> {
+    // Core orchestrator tools in ToolDefinition format
+    const tools: any[] = [
+      {
+        name: 'spawn_agent',
+        description: 'Create a new specialist agent to work on a specific task. Agent names are automatically made unique. Includes automatic verification and rollback on failure.',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Descriptive name for this agent (will be made unique)' },
+            role: { type: 'string', description: 'What this agent specializes in' },
+            focus: { type: 'string', description: 'Specific task this agent should accomplish' },
+            systemPrompt: { type: 'string', description: 'Detailed instructions for the agent' },
+            workItemId: { type: 'string', description: 'User Story ID to assign to this agent (auto-assigns and moves to doing)' },
+            waitFor: { type: 'array', items: { type: 'string' }, description: 'Names of agents to wait for before starting' },
+          },
+          required: ['name', 'role', 'focus'],
+        },
+        handler: async (args: any) => {
+          let workItemAssigned = false;
+          let workItemMoved = false;
+          
+          try {
+            // Generate unique agent name
+            const agentStatus = this.agentPool.getStatus();
+            const existingNames = new Set([
+              ...agentStatus.activeAgents.map((a: any) => a.name),
+              ...agentStatus.pendingAgents,
+            ]);
+            const uniqueName = generateUniqueAgentName(args.name, existingNames);
+            
+            // If workItemId provided, assign and move to doing
+            if (args.workItemId) {
+              const { getWorkItemManager } = await import("../kanban");
+              const workItemManager = getWorkItemManager();
+              
+              await workItemManager.updateItem(args.workItemId, { assignee: uniqueName });
+              workItemAssigned = true;
+              
+              await workItemManager.moveItem(args.workItemId, 'doing');
+              workItemMoved = true;
+              
+              this.outputChannel.appendLine(`Assigned User Story ${args.workItemId} to ${uniqueName}`);
+            }
+            
+            await this.agentPool.spawnAgent({
+              name: uniqueName,
+              role: args.role,
+              focus: args.focus,
+              systemPrompt: args.systemPrompt ?? `You are a ${args.role}. Focus: ${args.focus}`,
+              waitFor: args.waitFor ?? [],
+              priority: 0,
+              workingDirectory: this.getWorkingDirectory(),
+              workItemId: args.workItemId,
+            });
+            
+            // Verify agent was created
+            const updatedStatus = this.agentPool.getStatus();
+            const agentExists = updatedStatus.activeAgents.some((a: any) => a.name === uniqueName) ||
+                               updatedStatus.pendingAgents.some((a: any) => a.name === uniqueName);
+            
+            if (!agentExists) {
+              throw new Error(`Agent ${uniqueName} was not found after spawning`);
+            }
+            
+            this.emit("agentSpawned", uniqueName);
+            const storyInfo = args.workItemId ? ` (assigned to ${args.workItemId})` : '';
+            return { content: [{ type: 'text', text: `Successfully spawned agent: ${uniqueName}${storyInfo}` }] };
+          } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            
+            // Rollback work item if agent spawn failed
+            if (args.workItemId && (workItemAssigned || workItemMoved)) {
+              try {
+                const { getWorkItemManager } = await import("../kanban");
+                const workItemManager = getWorkItemManager();
+                await workItemManager.moveItem(args.workItemId, 'todo');
+                await workItemManager.updateItem(args.workItemId, { assignee: undefined });
+                this.outputChannel.appendLine(`Rolled back ${args.workItemId} to todo (spawn failed)`);
+              } catch (rollbackError) {
+                this.outputChannel.appendLine(`Rollback failed: ${rollbackError}`);
+              }
+            }
+            
+            throw new Error(`Failed to spawn agent: ${errorMsg}`);
+          }
+        },
+      },
+      {
+        name: 'destroy_agent',
+        description: 'Shut down an agent that has completed its work.',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Agent name to shut down' },
+            reason: { type: 'string', description: 'Why the agent is being destroyed' },
+          },
+          required: ['name', 'reason'],
+        },
+        handler: async (args: any) => {
+          await this.agentPool.destroyAgent(args.name);
+          this.emit("agentDestroyed", args.name);
+          return { content: [{ type: 'text', text: `Destroyed agent: ${args.name}` }] };
+        },
+      },
+      {
+        name: 'message_agent',
+        description: 'Send instructions or updates to a running agent.',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Target agent name' },
+            message: { type: 'string', description: 'Message to send' },
+          },
+          required: ['name', 'message'],
+        },
+        handler: async (args: any) => {
+          await this.agentPool.messageAgent(args.name, args.message);
+          return { content: [{ type: 'text', text: `Message sent to agent: ${args.name}` }] };
+        },
+      },
+      {
+        name: 'get_agent_status',
+        description: 'Get the current status of all active agents.',
+        parameters: { type: 'object', properties: {}, required: [] },
+        handler: async () => {
+          const status = this.agentPool.getStatus();
+          return { content: [{ type: 'text', text: JSON.stringify(status, null, 2) }] };
+        },
+      },
+      {
+        name: 'report_to_user',
+        description: 'Send a progress report or question to the user.',
+        parameters: {
+          type: 'object',
+          properties: {
+            type: { type: 'string', enum: ['progress', 'complete', 'error', 'question'], description: 'Report type' },
+            message: { type: 'string', description: 'The message to show' },
+          },
+          required: ['type', 'message'],
+        },
+        handler: async (args: any) => {
+          this._messages.push({
+            id: crypto.randomUUID(),
+            role: "orchestrator",
+            content: args.message,
+            timestamp: new Date(),
+            reportType: args.type,
+          });
+          this.emit("message", this._messages[this._messages.length - 1]);
+          this.emit("reportToUser", { type: args.type, message: args.message });
+          return { content: [{ type: 'text', text: `Reported to user: ${args.type}` }] };
+        },
+      },
+      {
+        name: 'list_workitems',
+        description: 'List work items (User Stories) from the Kanban board.',
+        parameters: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['todo', 'doing', 'code-review', 'done', 'cancelled'], description: 'Filter by status' },
+          },
+          required: [],
+        },
+        handler: async (args: any) => {
+          const { getWorkItemManager } = await import("../kanban");
+          const workItemManager = getWorkItemManager();
+          const items = await workItemManager.listItems(args.status);
+          
+          const summary = items.map((item: any) => {
+            const feature = item.featureRef ? ` [Feature: ${item.featureRef}]` : '';
+            return `[${item.status}] ${item.id}: ${item.title} (Priority: ${item.priority}, Assignee: ${item.assignee || 'unassigned'})${feature}`;
+          }).join('\n');
+          
+          return { content: [{ type: 'text', text: `User Stories:\n${summary || 'No items found'}` }] };
+        },
+      },
+      {
+        name: 'create_workitem',
+        description: 'Create a new work item (User Story) on the Kanban board.',
+        parameters: {
+          type: 'object',
+          properties: {
+            title: { type: 'string', description: 'Title of the work item' },
+            description: { type: 'string', description: 'Description of what needs to be done' },
+            priority: { type: 'string', enum: ['low', 'medium', 'high', 'critical'], description: 'Priority level' },
+            tags: { type: 'array', items: { type: 'string' }, description: 'Tags for categorization' },
+            estimatedHours: { type: 'number', description: 'Estimated agent hours to complete' },
+            featureRef: { type: 'string', description: 'Reference to parent feature folder' },
+          },
+          required: ['title'],
+        },
+        handler: async (args: any) => {
+          const { getWorkItemManager } = await import("../kanban");
+          const workItemManager = getWorkItemManager();
+          const item = await workItemManager.createItem({
+            title: args.title,
+            description: args.description,
+            priority: args.priority ?? 'medium',
+            tags: args.tags ?? [],
+            estimatedHours: args.estimatedHours,
+            featureRef: args.featureRef,
+          });
+          const featureInfo = item.featureRef ? ` (Feature: ${item.featureRef})` : '';
+          return { content: [{ type: 'text', text: `Created User Story ${item.id}: ${item.title}${featureInfo}` }] };
+        },
+      },
+      {
+        name: 'assign_workitem',
+        description: 'Assign a User Story to a specific agent.',
+        parameters: {
+          type: 'object',
+          properties: {
+            itemId: { type: 'string', description: 'User Story ID to assign' },
+            agentName: { type: 'string', description: 'Name of the agent to assign' },
+          },
+          required: ['itemId', 'agentName'],
+        },
+        handler: async (args: any) => {
+          const { getWorkItemManager } = await import("../kanban");
+          const workItemManager = getWorkItemManager();
+          await workItemManager.updateItem(args.itemId, { assignee: args.agentName });
+          return { content: [{ type: 'text', text: `Assigned ${args.itemId} to ${args.agentName}` }] };
+        },
+      },
+      {
+        name: 'move_workitem',
+        description: 'Move a work item to a different status column.',
+        parameters: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'Work item ID' },
+            status: { type: 'string', enum: ['todo', 'doing', 'code-review', 'done', 'cancelled'], description: 'New status' },
+          },
+          required: ['id', 'status'],
+        },
+        handler: async (args: any) => {
+          const { getWorkItemManager } = await import("../kanban");
+          const workItemManager = getWorkItemManager();
+          await workItemManager.moveItem(args.id, args.status);
+          return { content: [{ type: 'text', text: `Moved ${args.id} to ${args.status}` }] };
+        },
+      },
+      {
+        name: 'get_unassigned_todo_items',
+        description: 'Get all unassigned User Stories in the todo column. Use to find work needing agents.',
+        parameters: { type: 'object', properties: {}, required: [] },
+        handler: async () => {
+          const { getWorkItemManager } = await import("../kanban");
+          const workItemManager = getWorkItemManager();
+          const todoItems = await workItemManager.listItems('todo');
+          const unassigned = todoItems.filter((item: any) => !item.assignee);
+          
+          if (unassigned.length === 0) {
+            return { content: [{ type: 'text', text: 'No unassigned items in todo column.' }] };
+          }
+          
+          const summary = unassigned.map((item: any) => {
+            const feature = item.featureRef ? ` [Feature: ${item.featureRef}]` : '';
+            const estimate = item.estimatedHours ? ` (Est: ${item.estimatedHours}h)` : '';
+            return `- ${item.id}: ${item.title} (${item.priority})${estimate}${feature}`;
+          }).join('\n');
+          
+          return { content: [{ type: 'text', text: `Found ${unassigned.length} unassigned items:\n${summary}` }] };
+        },
+      },
+      {
+        name: 'spawn_agents_for_items',
+        description: 'Spawn specialist agents for multiple work items concurrently. Preferred way to maximize parallel work.',
+        parameters: {
+          type: 'object',
+          properties: {
+            assignments: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  workItemId: { type: 'string', description: 'The User Story ID' },
+                  agentName: { type: 'string', description: 'Descriptive name for the agent' },
+                  role: { type: 'string', description: 'Agent role' },
+                  focus: { type: 'string', description: 'Specific focus/task' },
+                },
+                required: ['workItemId', 'agentName', 'role', 'focus'],
+              },
+              description: 'List of work item to agent assignments',
+            },
+          },
+          required: ['assignments'],
+        },
+        handler: async (args: any) => {
+          const { getWorkItemManager } = await import("../kanban");
+          const workItemManager = getWorkItemManager();
+          
+          const results: string[] = [];
+          const errors: string[] = [];
+          
+          // Generate unique names first
+          const agentStatus = this.agentPool.getStatus();
+          const existingNames = new Set([
+            ...agentStatus.activeAgents.map((a: any) => a.name),
+            ...agentStatus.pendingAgents,
+          ]);
+          
+          const nameMapping = new Map<string, string>();
+          for (const assignment of args.assignments) {
+            const uniqueName = generateUniqueAgentName(assignment.agentName, existingNames);
+            nameMapping.set(assignment.agentName, uniqueName);
+            existingNames.add(uniqueName);
+          }
+          
+          // Spawn agents concurrently
+          const spawnPromises = args.assignments.map(async (assignment: any) => {
+            const uniqueName = nameMapping.get(assignment.agentName)!;
+            let workItemAssigned = false;
+            let workItemMoved = false;
+            
+            try {
+              await workItemManager.updateItem(assignment.workItemId, { assignee: uniqueName });
+              workItemAssigned = true;
+              
+              await workItemManager.moveItem(assignment.workItemId, 'doing');
+              workItemMoved = true;
+              
+              await this.agentPool.spawnAgent({
+                name: uniqueName,
+                role: assignment.role,
+                focus: assignment.focus,
+                systemPrompt: `You are a ${assignment.role}. Focus: ${assignment.focus}`,
+                waitFor: [],
+                priority: 0,
+                workingDirectory: this.getWorkingDirectory(),
+                workItemId: assignment.workItemId,
+              });
+              
+              this.emit("agentSpawned", uniqueName);
+              results.push(`✓ ${uniqueName} → ${assignment.workItemId}`);
+            } catch (error) {
+              const errorMsg = error instanceof Error ? error.message : String(error);
+              errors.push(`✗ ${uniqueName}: ${errorMsg}`);
+              
+              // Rollback
+              if (workItemAssigned || workItemMoved) {
+                try {
+                  await workItemManager.moveItem(assignment.workItemId, 'todo');
+                  await workItemManager.updateItem(assignment.workItemId, { assignee: undefined });
+                } catch { /* ignore rollback errors */ }
+              }
+            }
+          });
+          
+          await Promise.allSettled(spawnPromises);
+          
+          const summary = [...results, ...errors].join('\n');
+          return { content: [{ type: 'text', text: `Spawn results:\n${summary}` }] };
+        },
+      },
+    ];
+
+    this.outputChannel.appendLine(`[Copilot Backend] Created ${tools.length} orchestrator tools in ToolDefinition format`);
+    
+    return tools;
+  }
+
+  /**
    * Get MCP server configuration
    */
   private getMcpServers(): Record<string, any> {
@@ -1542,6 +2032,12 @@ When done, move the item to 'done' if approved, or back to 'doing' with notes if
    */
   async dispose(): Promise<void> {
     await this.stop();
+    
+    // Dispose configuration change listener
+    if (this._configChangeDisposable) {
+      this._configChangeDisposable.dispose();
+      this._configChangeDisposable = undefined;
+    }
     
     // Destroy backend session
     if (this._backendSession) {

@@ -59,7 +59,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // If the message is for a sub-agent, inject a notification to that agent
     else if (data.recipient !== "orchestrator" && data.recipient !== "human" && agentPool) {
       const agent = agentPool.getAgent(data.recipient);
-      // Only notify agents that have an active Claude session:
+      // Only notify agents that have an active backend session:
       // - "waiting" = placeholder waiting for dependencies, no session yet
       // - "complete" = finished working, shouldn't be reactivated
       // - "error" = broken state, notification would likely fail

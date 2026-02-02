@@ -16,7 +16,6 @@ import {
   BackendOptions,
 } from '../types';
 import { CopilotSession } from './CopilotSession';
-import { convertToolsToCopilotFormat } from './copilotToolAdapter';
 
 /**
  * Interface for the Copilot SDK client
@@ -139,7 +138,9 @@ export class CopilotBackend implements AgentBackend {
 
       // Try to get copilot version
       const copilotPath = this.options?.pathToCopilotExecutable || 'copilot';
-      await execAsync(`${copilotPath} --version`);
+      // Quote the path to handle spaces
+      const quotedPath = copilotPath.includes(' ') ? `"${copilotPath}"` : copilotPath;
+      await execAsync(`${quotedPath} --version`);
       
       console.log(`[Copilot Backend] Copilot CLI found`);
       return true;
@@ -164,62 +165,110 @@ export class CopilotBackend implements AgentBackend {
       throw new Error('[Copilot Backend] Client failed to initialize');
     }
 
+    // Map model names from Clautana config to Copilot SDK format
+    const mappedModel = this.mapModelName(config.model);
+
     console.log(`[Copilot Backend] Creating session with config:`, {
       sessionId: config.sessionId,
       workingDirectory: config.workingDirectory,
-      model: config.model || 'gpt-5',
+      model: mappedModel,
       toolCount: config.tools?.length || 0,
+      mcpServers: config.mcpServers ? Object.keys(config.mcpServers) : [],
     });
 
     // Generate session ID if not provided
     const sessionId = config.sessionId || crypto.randomUUID();
 
     // Convert tools to Copilot format
+    // NOTE: Copilot SDK's defineTool expects JSON Schema for parameters, NOT Zod schemas!
+    // Our ToolDefinition already has JSON Schema parameters, so we pass them directly.
     let copilotTools: unknown[] = [];
+    let toolConversionWarnings: string[] = [];
+    
     if (config.tools && config.tools.length > 0) {
       console.log(`[Copilot Backend] Converting ${config.tools.length} tools to Copilot format`);
       try {
         const { defineTool } = await import('@github/copilot-sdk');
         
-        const convertedTools = convertToolsToCopilotFormat(config.tools);
-        copilotTools = convertedTools.map(tool => 
-          defineTool(tool.name, {
-            description: tool.description,
-            parameters: tool.parameters,
-            handler: tool.handler,
-          })
-        );
+        // Convert tools individually to isolate failures
+        for (const tool of config.tools) {
+          try {
+            console.log(`[Copilot Backend] Defining tool: ${tool.name}`);
+            
+            // Wrap handler to log execution
+            const wrappedHandler = async (args: Record<string, unknown>) => {
+              console.log(`[Copilot Backend] EXECUTING tool: ${tool.name}`, JSON.stringify(args));
+              try {
+                const result = await tool.handler(args);
+                console.log(`[Copilot Backend] Tool ${tool.name} completed successfully`);
+                return result;
+              } catch (err) {
+                console.error(`[Copilot Backend] Tool ${tool.name} FAILED:`, err);
+                throw err;
+              }
+            };
+            
+            // defineTool expects: defineTool(name, { description, parameters: JSON_SCHEMA, handler })
+            // Cast via unknown as the SDK accepts either Zod or JSON Schema
+            const copilotTool = defineTool(tool.name, {
+              description: tool.description,
+              parameters: tool.parameters as unknown as Record<string, unknown>,
+              handler: wrappedHandler,
+            });
+            copilotTools.push(copilotTool);
+          } catch (toolErr) {
+            const msg = `Tool '${tool.name}' failed to convert: ${toolErr instanceof Error ? toolErr.message : String(toolErr)}`;
+            console.warn(`[Copilot Backend] ${msg}`);
+            toolConversionWarnings.push(msg);
+          }
+        }
         
-        console.log(`[Copilot Backend] Converted ${copilotTools.length} tools`);
+        console.log(`[Copilot Backend] Converted ${copilotTools.length}/${config.tools.length} tools`);
+        if (toolConversionWarnings.length > 0) {
+          console.warn(`[Copilot Backend] ${toolConversionWarnings.length} tools failed to convert`);
+        }
       } catch (err) {
-        console.error(`[Copilot Backend] Failed to convert tools:`, err);
-        // Continue without tools rather than failing
-        copilotTools = [];
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error(`[Copilot Backend] Failed to import Copilot SDK or convert tools: ${errMsg}`);
+        // Log but continue without tools - agent can still operate with reduced functionality
+        toolConversionWarnings.push(`Tool conversion failed entirely: ${errMsg}`);
       }
     }
 
     // Build session config
     const sdkSessionConfig: Record<string, unknown> = {
       sessionId,
-      model: config.model || 'gpt-5',
+      model: mappedModel,
       tools: copilotTools,
+      // Pass working directory - Copilot SDK uses 'cwd' like Claude
+      cwd: config.workingDirectory,
     };
 
     // Add system message if provided
     if (config.systemPrompt) {
       sdkSessionConfig.systemMessage = {
         content: config.systemPrompt,
-        mode: 'append',  // Append to default CLI persona
+        mode: 'replace',  // Replace default persona to enforce Team Manager behavior
       };
+    }
+
+    // Note: MCP servers are handled differently in Copilot CLI
+    // The CLI discovers MCP servers from its own configuration
+    // We log them here for debugging but don't pass them directly
+    if (config.mcpServers && Object.keys(config.mcpServers).length > 0) {
+      console.log(`[Copilot Backend] MCP servers configured: ${Object.keys(config.mcpServers).join(', ')}`);
+      console.log(`[Copilot Backend] Note: Copilot CLI uses its own MCP configuration (copilot.json)`);
+      // TODO: Investigate if Copilot SDK supports programmatic MCP server registration
     }
 
     // Create SDK session
     try {
       const sdkSession = await this._client.createSession(sdkSessionConfig);
       
-      // Wrap in our CopilotSession
+      // Wrap in our CopilotSession with additional context
       const session = new CopilotSession(sessionId, {
-        model: config.model,
+        model: mappedModel,
+        workingDirectory: config.workingDirectory,
       });
       
       // Attach the SDK session
@@ -234,6 +283,40 @@ export class CopilotBackend implements AgentBackend {
       console.error(`[Copilot Backend] Failed to create session:`, message);
       throw new Error(`[Copilot Backend] Session creation failed: ${message}`);
     }
+  }
+
+  /**
+   * Map Clautana model names to Copilot SDK model names
+   * 
+   * Clautana uses: 'opus', 'sonnet', 'haiku' (from Claude)
+   * Copilot SDK uses: 'gpt-5', 'claude-sonnet-4.5', 'claude-haiku-4.5', etc.
+   */
+  private mapModelName(model?: string): string {
+    if (!model) {
+      return 'claude-sonnet-4'; // Default to Claude Sonnet via Copilot
+    }
+
+    // Already a full model name
+    if (model.includes('-') || model.includes('gpt') || model.includes('claude-')) {
+      return model;
+    }
+
+    // Map short names to Copilot SDK model names
+    const modelMap: Record<string, string> = {
+      'opus': 'claude-opus-4.5',
+      'sonnet': 'claude-sonnet-4',
+      'haiku': 'claude-haiku-4.5',
+    };
+
+    const mapped = modelMap[model.toLowerCase()];
+    if (mapped) {
+      console.log(`[Copilot Backend] Mapped model '${model}' to '${mapped}'`);
+      return mapped;
+    }
+
+    // Return as-is if no mapping found
+    console.log(`[Copilot Backend] Using model as-is: ${model}`);
+    return model;
   }
 
   /**

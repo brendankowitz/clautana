@@ -186,6 +186,7 @@ export interface AgentMessage {
   timestamp: Date;
   read: boolean;
   archived?: boolean;
+  replyTo?: string;  // ID of message this is replying to
 }
 
 /**
@@ -305,9 +306,10 @@ export interface ExtendedAgentConfig {
   focus: string;
   systemPrompt: string;
   workingDirectory: string;
-  mcpServers: Record<string, McpServerConfig>;
+  mcpServers?: Record<string, McpServerConfig>;  // Optional: only used for Claude backend
   color: string;
   initialStatus?: AgentStatus;
   outputChannel?: { appendLine: (value: string) => void };
   pathToClaudeCodeExecutable?: string;
+  model?: string;
 }

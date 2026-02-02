@@ -75,7 +75,16 @@ export class ClaudeSession implements BackendSession {
 
     try {
       // Dynamic import of Claude SDK
-      const { query } = await import('@anthropic-ai/claude-agent-sdk');
+      let query: any;
+      try {
+        const sdk = await import('@anthropic-ai/claude-agent-sdk');
+        query = sdk.query;
+      } catch (importError) {
+        throw new Error(
+          'Claude Agent SDK not installed. Please run: npm install @anthropic-ai/claude-agent-sdk\n' +
+          'Or switch to Copilot backend in settings: clautana.backend = "copilot"'
+        );
+      }
 
       // Merge abort controller into options
       const queryOptions: any = {

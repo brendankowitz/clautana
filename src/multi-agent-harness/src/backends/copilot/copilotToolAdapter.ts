@@ -31,18 +31,41 @@ export function convertToolsToCopilotFormat(
 ): CopilotToolDefinition[] {
   console.log(`[Copilot Tool Adapter] Converting ${tools.length} tools to Copilot format`);
   
-  return tools.map(tool => {
-    console.log(`[Copilot Tool Adapter] Converting tool: ${tool.name}`);
-    
-    const zodSchema = jsonSchemaToZod(tool.parameters);
-    
-    return {
-      name: tool.name,
-      description: tool.description,
-      parameters: zodSchema,
-      handler: tool.handler,
-    };
-  });
+  const results: CopilotToolDefinition[] = [];
+  
+  for (const tool of tools) {
+    try {
+      console.log(`[Copilot Tool Adapter] Converting tool: ${tool.name}`);
+      
+      const zodSchema = jsonSchemaToZod(tool.parameters);
+      
+      // Wrap handler with logging to debug execution
+      const wrappedHandler = async (args: Record<string, unknown>) => {
+        console.log(`[Copilot Tool Adapter] EXECUTING tool: ${tool.name}`, JSON.stringify(args));
+        try {
+          const result = await tool.handler(args);
+          console.log(`[Copilot Tool Adapter] Tool ${tool.name} completed successfully`);
+          return result;
+        } catch (err) {
+          console.error(`[Copilot Tool Adapter] Tool ${tool.name} FAILED:`, err);
+          throw err;
+        }
+      };
+      
+      results.push({
+        name: tool.name,
+        description: tool.description,
+        parameters: zodSchema,
+        handler: wrappedHandler,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[Copilot Tool Adapter] Failed to convert tool '${tool.name}': ${msg}`);
+      // Skip this tool but continue with others
+    }
+  }
+  
+  return results;
 }
 
 /**
@@ -76,7 +99,13 @@ export function jsonSchemaToZod(schema: JsonSchema, required = true): ZodTypeAny
     } else {
       // Mixed enum - use union of literals
       const literals = schema.enum.map(v => z.literal(v as string | number | boolean));
-      zodSchema = z.union(literals as [ZodTypeAny, ZodTypeAny, ...ZodTypeAny[]]);
+      if (literals.length >= 2) {
+        zodSchema = z.union(literals as unknown as [ZodTypeAny, ZodTypeAny, ...ZodTypeAny[]]);
+      } else if (literals.length === 1) {
+        zodSchema = literals[0];
+      } else {
+        zodSchema = z.never();
+      }
     }
   } else {
     // Handle by type
@@ -142,7 +171,12 @@ function buildStringSchema(schema: JsonSchema): ZodTypeAny {
     s = s.max(schema.maxLength);
   }
   if (schema.pattern) {
-    s = s.regex(new RegExp(schema.pattern));
+    try {
+      s = s.regex(new RegExp(schema.pattern));
+    } catch (err) {
+      // Invalid regex pattern - skip it rather than fail
+      console.warn(`[Copilot Tool Adapter] Invalid regex pattern '${schema.pattern}': ${err}`);
+    }
   }
   
   return s;
@@ -184,10 +218,10 @@ function buildObjectSchema(schema: JsonSchema): ZodTypeAny {
     shape[key] = jsonSchemaToZod(propSchema, isRequired);
   }
 
-  let objSchema = z.object(shape);
+  let objSchema: z.ZodObject<Record<string, ZodTypeAny>> = z.object(shape);
   
   if (schema.additionalProperties === false) {
-    objSchema = objSchema.strict();
+    objSchema = objSchema.strict() as z.ZodObject<Record<string, ZodTypeAny>>;
   }
 
   return objSchema;

@@ -13,10 +13,9 @@ const config = {
   },
   externals: {
     vscode: 'commonjs vscode',
-    // Keep the Claude Agent SDK external to avoid hardcoded paths during bundling
+    // Keep the Claude Agent SDK external - it spawns a CLI process
     '@anthropic-ai/claude-agent-sdk': 'commonjs @anthropic-ai/claude-agent-sdk',
-    // Keep the Copilot SDK external
-    '@github/copilot-sdk': 'commonjs @github/copilot-sdk'
+    // Note: @github/copilot-sdk is bundled (not external) so it ships with the extension
   },
   resolve: {
     extensions: ['.ts', '.js']

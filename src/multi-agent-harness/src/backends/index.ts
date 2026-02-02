@@ -78,6 +78,11 @@ export {
   isBackendAvailable,
   getAvailableBackends,
   getBackendName,
+  autoDetectBackend,
+  detectAvailableBackends,
+  isClaudeCliInstalled,
+  isCopilotCliInstalled,
+  clearCliDetectionCache,
 } from './BackendFactory';
 
 // Claude backend (fully implemented)

@@ -17,6 +17,8 @@
   ],
   "keywords": [
     "claude",
+    "copilot",
+    "github",
     "ai",
     "agent",
     "multi-agent",
@@ -243,15 +245,17 @@
         "clautana.backend": {
           "type": "string",
           "enum": [
+            "auto",
             "claude",
             "copilot"
           ],
-          "default": "claude",
+          "default": "auto",
           "enumDescriptions": [
+            "Auto-detect - Automatically use whichever CLI is installed (prefers Claude if both available)",
             "Claude Agent SDK - Uses Anthropic's Claude models via claude-agent-sdk",
             "GitHub Copilot SDK - Uses GitHub Copilot CLI (requires copilot CLI installed)"
           ],
-          "markdownDescription": "AI backend to use for agents. **Claude** is recommended and fully supported. **Copilot** is experimental."
+          "markdownDescription": "AI backend to use for agents. **Auto** detects which CLI is installed. **Claude** is recommended and fully supported. **Copilot** is experimental."
         },
         "clautana.coordinatorModel": {
           "type": "string",
@@ -262,11 +266,11 @@
           ],
           "default": "sonnet",
           "enumDescriptions": [
-            "Claude Opus - Most capable, best for complex orchestration",
-            "Claude Sonnet - Balanced performance and speed (recommended)",
-            "Claude Haiku - Fastest, best for simple coordination tasks"
+            "Opus - Most capable, best for complex orchestration",
+            "Sonnet - Balanced performance and speed (recommended)",
+            "Haiku - Fastest, best for simple coordination tasks"
           ],
-          "description": "Model to use for the orchestrator agent"
+          "description": "Model tier to use for the orchestrator agent (backend maps to appropriate model)"
         },
         "clautana.workerModel": {
           "type": "string",
@@ -277,11 +281,11 @@
           ],
           "default": "sonnet",
           "enumDescriptions": [
-            "Claude Opus - Most capable, best for complex tasks",
-            "Claude Sonnet - Balanced performance and speed (recommended)",
-            "Claude Haiku - Fastest, best for simple tasks"
+            "Opus - Most capable, best for complex tasks",
+            "Sonnet - Balanced performance and speed (recommended)",
+            "Haiku - Fastest, best for simple tasks"
           ],
-          "description": "Model to use for spawned worker agents"
+          "description": "Model tier to use for spawned worker agents (backend maps to appropriate model)"
         },
         "clautana.maxConcurrentAgents": {
           "type": "number",
@@ -292,6 +296,16 @@
           "type": "object",
           "default": {},
           "description": "Additional MCP server configurations for agents"
+        },
+        "clautana.pathToClaudeCodeExecutable": {
+          "type": "string",
+          "default": "",
+          "description": "Custom path to Claude CLI executable (leave empty to use bundled or PATH)"
+        },
+        "clautana.pathToCopilotExecutable": {
+          "type": "string",
+          "default": "",
+          "description": "Custom path to Copilot CLI executable (leave empty to use PATH)"
         },
         "clautana.showClaimsInEditor": {
           "type": "boolean",
@@ -400,11 +414,13 @@
     "package": "npm run copy-docs && vsce package"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.1.0",
-    "@github/copilot-sdk": "^0.1.0",
     "js-yaml": "^4.1.0",
     "uuid": "^9.0.0",
     "zod": "^3.22.0"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+    "@github/copilot-sdk": "^0.1.17"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

@@ -124,25 +124,43 @@ export class AgentPool extends EventEmitter {
     const color = this.getNextColor();
     const userMcpServers = this.getMcpServers();
 
-    // Create extension MCP server with all clautana tools (work items, memory, etc.)
-    const { createExtensionMcpServer } = await import("../mcp/ExtensionMcpServer");
-    const extensionMcpServer = await createExtensionMcpServer(config.name);
+    // Get backend type from configuration
+    const vsConfig = vscode.workspace.getConfiguration("clautana");
+    const backendSetting = vsConfig.get<string>("backend") ?? "auto";
+    
+    // Only create MCP servers for Claude backend (Copilot uses direct tools)
+    let mcpServers: Record<string, McpServerConfig> | undefined;
+    if (backendSetting === "auto" || backendSetting === "claude") {
+      const { createExtensionMcpServer } = await import("../mcp/ExtensionMcpServer");
+      const extensionMcpServer = await createExtensionMcpServer(config.name);
 
-    // Merge extension server with user-configured servers
-    const mcpServers = {
-      clautana: extensionMcpServer,
-      ...userMcpServers,
-    };
-
-    // Construct path to Claude Code CLI bundled with the extension
+      // Merge extension server with user-configured servers
+      mcpServers = {
+        clautana: extensionMcpServer,
+        ...userMcpServers,
+      } as Record<string, McpServerConfig>;
+    }
+    
+    // Build backend-specific paths
     const path = require("path");
-    const pathToClaudeCodeExecutable = path.join(
-      this.extensionContext.extensionPath,
-      "node_modules",
-      "@anthropic-ai",
-      "claude-agent-sdk",
-      "cli.js"
-    );
+    let pathToClaudeCodeExecutable: string | undefined;
+    
+    // Only set Claude path if we might use Claude backend
+    if (backendSetting === "auto" || backendSetting === "claude") {
+      pathToClaudeCodeExecutable = path.join(
+        this.extensionContext.extensionPath,
+        "node_modules",
+        "@anthropic-ai",
+        "claude-agent-sdk",
+        "cli.js"
+      );
+    }
+    
+    // Note: Copilot uses system-installed CLI, no custom path needed by default
+    // User can configure custom path via VS Code settings if needed
+
+    // Get model from VS Code configuration
+    const workerModel = vsConfig.get<string>("workerModel") ?? "sonnet";
 
     const sessionConfig: ExtendedAgentConfig = {
       name: config.name,
@@ -154,6 +172,7 @@ export class AgentPool extends EventEmitter {
       color,
       outputChannel: this.outputChannel,
       pathToClaudeCodeExecutable,
+      model: workerModel,
     };
 
     const session = new AgentSession(sessionConfig);

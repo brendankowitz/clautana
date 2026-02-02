@@ -1129,7 +1129,14 @@ slashCommands.register({
         let msg = `**${profile.name}** (\`${profile.id}\`)\n\n`;
         msg += `**Role:** ${profile.role}\n`;
         if (profile.description) msg += `**Description:** ${profile.description}\n`;
-        msg += `**Model:** ${profile.model.provider === "claude" ? profile.model.modelId : "VS Code Copilot"}\n`;
+        
+        // Display model info based on provider
+        if (profile.model.provider === "claude") {
+          msg += `**Model:** Claude - ${profile.model.modelId}\n`;
+        } else {
+          // VS Code LLM (includes Copilot)
+          msg += `**Model:** VS Code LLM\n`;
+        }
 
         if (profile.tools) {
           const perms = [];
@@ -1177,6 +1184,9 @@ slashCommands.register({
         const configManager = getConfigManager();
         const agentsDir = `${configManager.getClautanaPath()}/agents`;
 
+        // Template profile - uses ModelConfig format (claude or vscode provider)
+        // Note: This is separate from the backend setting (clautana.backend)
+        // The backend determines how the model is invoked, the profile determines which model
         const templateProfile = {
           id: "my-custom-agent",
           name: "My Custom Agent",
@@ -1186,7 +1196,7 @@ slashCommands.register({
           color: "#3B82F6",
           model: {
             provider: "claude",
-            modelId: "claude-sonnet-4-20250514",
+            modelId: "sonnet",  // Use tier name - backend will resolve to full model ID
           },
           systemPrompt: "You are a helpful assistant.\n\nYour current task: {{focus}}",
           tools: {
@@ -1286,13 +1296,24 @@ slashCommands.register({
   name: "models",
   description: "Show available AI models",
   async execute(_ctx) {
+    // Check which backend is configured
+    const config = vscode.workspace.getConfiguration("clautana");
+    const backendSetting = config.get<string>("backend") ?? "auto";
+    
     let msg = "**Available AI Models**\n\n";
+    msg += `**Current Backend Setting:** \`${backendSetting}\`\n\n`;
 
     // Claude models
     msg += "**Claude (via Agent SDK):**\n";
-    msg += "- `claude-opus-4-20250514` - Most capable, best for complex tasks\n";
-    msg += "- `claude-sonnet-4-20250514` - Balanced performance and speed\n";
-    msg += "- `claude-haiku-3-5-20241022` - Fastest, good for simple tasks\n\n";
+    msg += "- `opus` / `claude-opus-4-20250514` - Most capable, best for complex tasks\n";
+    msg += "- `sonnet` / `claude-sonnet-4-20250514` - Balanced performance and speed\n";
+    msg += "- `haiku` / `claude-haiku-3-5-20241022` - Fastest, good for simple tasks\n\n";
+    
+    // Copilot models
+    msg += "**GitHub Copilot (via Copilot SDK):**\n";
+    msg += "- `sonnet` → `claude-sonnet-4` - Default model\n";
+    msg += "- `opus` → `claude-opus-4.5` - Most capable\n";
+    msg += "- `haiku` → `claude-haiku-4.5` - Fastest\n\n";
 
     // VS Code LLM
     const vscodeLLMAvailable = await isVSCodeLLMAvailable();
@@ -1311,7 +1332,7 @@ slashCommands.register({
       msg += "- Not available (Copilot not installed or not signed in)\n";
     }
 
-    msg += "\nUse `/profile list` to see agent profiles using these models.";
+    msg += "\n**Tip:** Set `clautana.backend` to `claude`, `copilot`, or `auto` in settings.";
     return { success: true, message: msg };
   },
 });

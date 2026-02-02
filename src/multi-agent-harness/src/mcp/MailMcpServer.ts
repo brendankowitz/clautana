@@ -1,4 +1,5 @@
 import { EventEmitter } from "events";
+import * as crypto from "crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { AgentMessage } from "../coordinator/types";
@@ -826,5 +827,152 @@ export async function createMailMcpTools(agentName: string): Promise<any[]> {
         };
       }
     ),
+  ];
+}
+
+/**
+ * Create mail tools in ToolDefinition format for Copilot backend.
+ * 
+ * This is a simplified version of createMailMcpTools() that returns
+ * tools in the backend-agnostic ToolDefinition format.
+ * 
+ * @param agentName - The name of the agent these tools are for
+ */
+export async function createMailToolDefinitions(agentName: string): Promise<any[]> {
+  return [
+    {
+      name: 'send_message',
+      description: 'Send a message to another agent or the orchestrator.',
+      parameters: {
+        type: 'object',
+        properties: {
+          to: { type: 'string', description: 'Recipient agent name' },
+          subject: { type: 'string', description: 'Message subject' },
+          body: { type: 'string', description: 'Message content' },
+        },
+        required: ['to', 'subject'],
+      },
+      handler: async (args: any) => {
+        const message: AgentMessage = {
+          id: crypto.randomUUID(),
+          from: agentName,
+          to: args.to,
+          subject: args.subject,
+          body: args.body,
+          timestamp: new Date(),
+          read: false,
+        };
+        await globalMessageStore.addMessage(message);
+        return { content: [{ type: 'text', text: `Message sent to ${args.to}` }] };
+      },
+    },
+    {
+      name: 'inbox',
+      description: 'Get messages for this agent.',
+      parameters: {
+        type: 'object',
+        properties: {
+          includeRead: { type: 'boolean', description: 'Include read messages' },
+        },
+        required: [],
+      },
+      handler: async (args: any) => {
+        const allMessages = await globalMessageStore.getAllMessages();
+        const messages = allMessages.filter((m: AgentMessage) => 
+          m.to === agentName && (args.includeRead || !m.read)
+        );
+        const formatted = messages.map((m: AgentMessage) => 
+          `[${m.id}] From: ${m.from}, Subject: ${m.subject}, Read: ${m.read}`
+        ).join('\n');
+        return { content: [{ type: 'text', text: formatted || 'No messages' }] };
+      },
+    },
+    {
+      name: 'read_message',
+      description: 'Read a specific message by ID.',
+      parameters: {
+        type: 'object',
+        properties: {
+          messageId: { type: 'string', description: 'The message ID' },
+          markAsRead: { type: 'boolean', description: 'Mark as read after reading' },
+        },
+        required: ['messageId'],
+      },
+      handler: async (args: any) => {
+        const messages = await globalMessageStore.getAllMessages();
+        const message = messages.find((m: AgentMessage) => m.id === args.messageId);
+        if (!message) {
+          return { content: [{ type: 'text', text: 'Message not found' }] };
+        }
+        if (args.markAsRead) {
+          await globalMessageStore.markRead(args.messageId);
+        }
+        return { content: [{ type: 'text', text: `From: ${message.from}\nSubject: ${message.subject}\n\n${message.body || '(no body)'}` }] };
+      },
+    },
+    {
+      name: 'archive_message',
+      description: 'Archive a message after processing it. Always archive messages after reading them to keep inbox clean.',
+      parameters: {
+        type: 'object',
+        properties: {
+          messageId: { type: 'string', description: 'The message ID to archive' },
+        },
+        required: ['messageId'],
+      },
+      handler: async (args: any) => {
+        const success = await globalMessageStore.archiveMessage(args.messageId);
+        if (success) {
+          return { content: [{ type: 'text', text: `Message ${args.messageId} archived` }] };
+        }
+        return { content: [{ type: 'text', text: 'Message not found or already archived' }] };
+      },
+    },
+    {
+      name: 'reply_to_message',
+      description: 'Reply to a message. Automatically addresses the reply to the original sender.',
+      parameters: {
+        type: 'object',
+        properties: {
+          messageId: { type: 'string', description: 'The message ID to reply to' },
+          body: { type: 'string', description: 'Reply content' },
+        },
+        required: ['messageId', 'body'],
+      },
+      handler: async (args: any) => {
+        const messages = await globalMessageStore.getAllMessages();
+        const originalMessage = messages.find((m: AgentMessage) => m.id === args.messageId);
+        if (!originalMessage) {
+          return { content: [{ type: 'text', text: 'Original message not found' }] };
+        }
+        const reply: AgentMessage = {
+          id: crypto.randomUUID(),
+          from: agentName,
+          to: originalMessage.from,
+          subject: `Re: ${originalMessage.subject}`,
+          body: args.body,
+          timestamp: new Date(),
+          read: false,
+          replyTo: args.messageId,
+        };
+        await globalMessageStore.addMessage(reply);
+        return { content: [{ type: 'text', text: `Reply sent to ${originalMessage.from}` }] };
+      },
+    },
+    {
+      name: 'mark_message_read',
+      description: 'Mark a message as read without archiving it.',
+      parameters: {
+        type: 'object',
+        properties: {
+          messageId: { type: 'string', description: 'The message ID to mark as read' },
+        },
+        required: ['messageId'],
+      },
+      handler: async (args: any) => {
+        await globalMessageStore.markRead(args.messageId);
+        return { content: [{ type: 'text', text: `Message ${args.messageId} marked as read` }] };
+      },
+    },
   ];
 }

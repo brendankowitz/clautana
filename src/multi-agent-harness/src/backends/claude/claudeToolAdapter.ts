@@ -20,8 +20,17 @@ export async function convertToolsToClaudeFormat(
 ): Promise<any[]> {
   console.log(`[Claude Tool Adapter] Converting ${tools.length} tools to Claude format`);
 
-  // Dynamic import of Claude SDK
-  const { tool } = await import('@anthropic-ai/claude-agent-sdk');
+  // Dynamic import of Claude SDK with error handling
+  let tool: any;
+  try {
+    const sdk = await import('@anthropic-ai/claude-agent-sdk');
+    tool = sdk.tool;
+  } catch (importError) {
+    console.error('[Claude Tool Adapter] Failed to import Claude SDK:', importError);
+    throw new Error(
+      'Claude Agent SDK not installed. Please run: npm install @anthropic-ai/claude-agent-sdk'
+    );
+  }
 
   const claudeTools = tools.map((toolDef) => {
     console.log(`[Claude Tool Adapter] Converting tool: ${toolDef.name}`);

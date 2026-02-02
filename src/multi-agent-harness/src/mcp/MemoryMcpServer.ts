@@ -542,3 +542,91 @@ export async function createMemoryMcpTools(): Promise<any[]> {
     ),
   ];
 }
+
+/**
+ * Create memory tools in ToolDefinition format for Copilot backend.
+ * 
+ * This is a simplified version of createMemoryMcpTools() that returns
+ * tools in the backend-agnostic ToolDefinition format.
+ */
+export async function createMemoryToolDefinitions(): Promise<any[]> {
+  return [
+    {
+      name: 'memory_search_facts',
+      description: 'Search for remembered facts about the codebase.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query' },
+          category: { type: 'string', description: 'Filter by category (architecture, patterns, gotchas, etc.)' },
+        },
+        required: ['query'],
+      },
+      handler: async (args: any) => {
+        const facts = await globalMemoryManager.searchFacts(args.query, args.category);
+        const formatted = facts.slice(0, 10).map(f => 
+          `[${f.category}] ${f.statement} (source: ${f.source})`
+        ).join('\n');
+        return { content: [{ type: 'text', text: formatted || 'No facts found' }] };
+      },
+    },
+    {
+      name: 'memory_save_fact',
+      description: 'Save a fact about the codebase for future reference.',
+      parameters: {
+        type: 'object',
+        properties: {
+          category: { type: 'string', description: 'Category (architecture, patterns, gotchas, dependencies, conventions)' },
+          statement: { type: 'string', description: 'The fact to remember' },
+        },
+        required: ['category', 'statement'],
+      },
+      handler: async (args: any) => {
+        await globalMemoryManager.addFact({
+          category: args.category,
+          statement: args.statement,
+          source: 'agent',
+        });
+        return { content: [{ type: 'text', text: `Saved fact: ${args.statement}` }] };
+      },
+    },
+    {
+      name: 'memory_search_playbooks',
+      description: 'Search for reusable procedure playbooks.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query' },
+        },
+        required: ['query'],
+      },
+      handler: async (args: any) => {
+        const playbooks = await globalMemoryManager.searchPlaybooks(args.query);
+        const formatted = playbooks.slice(0, 5).map(p => 
+          `[${p.title}] ${p.description}`
+        ).join('\n');
+        return { content: [{ type: 'text', text: formatted || 'No playbooks found' }] };
+      },
+    },
+    {
+      name: 'memory_record_lesson',
+      description: 'Record a lesson learned during the current task.',
+      parameters: {
+        type: 'object',
+        properties: {
+          lesson: { type: 'string', description: 'What was learned' },
+          context: { type: 'string', description: 'The situation where this was learned' },
+        },
+        required: ['lesson', 'context'],
+      },
+      handler: async (args: any) => {
+        await globalMemoryManager.addFact({
+          category: 'lesson',
+          statement: `${args.lesson} (Context: ${args.context})`,
+          source: 'agent-learned',
+        });
+        return { content: [{ type: 'text', text: `Recorded lesson: ${args.lesson}` }] };
+      },
+    },
+  ];
+}

@@ -5,6 +5,7 @@
  * This allows the multi-agent harness to use Claude as one of several possible backends.
  */
 
+import * as crypto from 'crypto';
 import {
   AgentBackend,
   BackendSession,
@@ -13,6 +14,7 @@ import {
   BackendOptions,
 } from '../types';
 import { ClaudeSession } from './ClaudeSession';
+import { convertToolsToClaudeFormat } from './claudeToolAdapter';
 
 /**
  * Claude Agent SDK backend implementation
@@ -84,11 +86,9 @@ export class ClaudeAgentBackend implements AgentBackend {
     if (config.tools && config.tools.length > 0) {
       console.log(`[Claude Backend] Converting ${config.tools.length} tools to Claude format`);
       try {
-        // Tools will be converted and used when implemented in Phase 1
-        // For now, we'll note that tool conversion is pending
-        console.warn(
-          `[Claude Backend] Tool conversion is a placeholder - full implementation in Phase 1`
-        );
+        const claudeTools = await convertToolsToClaudeFormat(config.tools);
+        queryOptions.tools = claudeTools;
+        console.log(`[Claude Backend] Converted ${claudeTools.length} tools successfully`);
       } catch (error) {
         console.error(
           `[Claude Backend] Failed to convert tools:`,

@@ -53,15 +53,23 @@ export class CopilotSession implements BackendSession {
   private _unsubscribe?: () => void;
   private _abortController?: AbortController;
 
+  /** Working directory for this session */
+  readonly workingDirectory?: string;
+  /** Model name for this session */
+  readonly model?: string;
+
   constructor(
     public readonly id: string,
-    private readonly _options: {
+    options: {
       sdkSession?: CopilotSdkSession;
       model?: string;
+      workingDirectory?: string;
     }
   ) {
-    console.log(`[Copilot Backend] Session created: ${id}`);
-    this._sdkSession = _options.sdkSession;
+    console.log(`[Copilot Backend] Session created: ${id}, model: ${options.model ?? 'default'}, cwd: ${options.workingDirectory ?? 'default'}`);
+    this._sdkSession = options.sdkSession;
+    this.model = options.model;
+    this.workingDirectory = options.workingDirectory;
   }
 
   /**
@@ -90,6 +98,9 @@ export class CopilotSession implements BackendSession {
     }
 
     console.log(`[Copilot Backend] Sending prompt to session ${this.id}`);
+
+    // Track timing for duration reporting
+    const startTime = Date.now();
 
     // Create abort controller
     this._abortController = options?.abortController || new AbortController();
@@ -158,10 +169,14 @@ export class CopilotSession implements BackendSession {
           break;
           
         case 'session.idle':
-          // Conversation turn complete
+          // Conversation turn complete - include duration
+          const durationMs = Date.now() - startTime;
           pushMessage({
             type: 'complete',
             sessionId: this.id,
+            durationMs,
+            // Copilot doesn't provide cost data
+            costUsd: undefined,
           });
           isComplete = true;
           break;
