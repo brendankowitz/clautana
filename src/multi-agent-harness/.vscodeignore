@@ -21,6 +21,9 @@ webview-ui/node_modules/**
 !node_modules/@anthropic-ai/
 !node_modules/@modelcontextprotocol/
 
+# EXCEPT: Include Copilot SDK and its native binary dependency
+!node_modules/@github/
+
 # Tests
 test/**
 .vscode-test/**

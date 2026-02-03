@@ -15,7 +15,9 @@ const config = {
     vscode: 'commonjs vscode',
     // Keep the Claude Agent SDK external - it spawns a CLI process
     '@anthropic-ai/claude-agent-sdk': 'commonjs @anthropic-ai/claude-agent-sdk',
-    // Note: @github/copilot-sdk is bundled (not external) so it ships with the extension
+    // Keep the Copilot CLI binary external - it's spawned as a subprocess
+    // Note: @github/copilot-sdk is bundled (ESM module, can't be commonjs external)
+    '@github/copilot': 'commonjs @github/copilot',
   },
   resolve: {
     extensions: ['.ts', '.js']
