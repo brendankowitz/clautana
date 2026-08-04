@@ -29,7 +29,9 @@ All of `providers/` (UI — replaced by the React desktop UI), `extension.ts`, `
 `mcp/LspMcpServer.ts` is **dropped permanently**, not deferred. It exposed VS Code's language services to agents; outside an IDE there is no equivalent to port. If agents need language intelligence later it will be a new component built on a standalone LSP client, designed on its own merits.
 
 **Relevant existing behaviour to preserve:**
-`AgentPool.ts:139` resolves the Claude Agent SDK's own bundled `cli.js` and passes it as `pathToClaudeCodeExecutable`, so no global `claude` install is required. The desktop app keeps this.
+`AgentPool.ts:139` resolves the Claude Agent SDK's own bundled `cli.js` and passes it as `pathToClaudeCodeExecutable`, so no global `claude` install is required.
+
+**Superseded during execution.** That mechanism no longer exists. `@anthropic-ai/claude-agent-sdk` 0.3.x ships no `cli.js`; the package (4.2MB) contains `sdk.mjs`, `bridge.mjs`, `extractFromBunfs.js`, and a `manifest.json` of per-platform prebuilt binaries with checksums. `sdk.d.ts` documents `pathToClaudeCodeExecutable` as *"Uses the built-in executable if not specified."* The desktop app therefore **omits the option entirely** and lets the SDK resolve its own executable. The outcome the extension wanted — no global `claude` install — still holds, by a different route. See §9 for the packaging consequence.
 
 **Dependency debt addressed in slice 1:** `@anthropic-ai/claude-agent-sdk` is pinned `^0.1.0`; current is `0.3.221`. The bump happens in slice 1, in isolation, before anything else depends on it.
 
@@ -141,7 +143,7 @@ The risks here are process-lifecycle, not logic.
 
 **Sidecar dies mid-run.** Rust restarts it with backoff. On restart the sidecar reloads in-flight runs from `events.jsonl` and marks any agent that was mid-turn as `interrupted` rather than resuming — resuming a half-finished tool call is worse than stopping. The UI resubscribes from its last `seq`.
 
-**Orphaned agent processes.** The SDK spawns `cli.js` children, so a hard kill of the sidecar can leave Claude processes running and consuming tokens. Rust tracks the sidecar in a Windows Job Object (process group on Unix) so OS-level teardown is guaranteed even on force-quit. Additionally the sidecar records child PIDs to a lockfile and reaps strays on next start.
+**Orphaned agent processes.** The SDK spawns a native `claude` executable as a child process, so a hard kill of the sidecar can leave Claude processes running and consuming tokens. Rust tracks the sidecar in a Windows Job Object (process group on Unix) so OS-level teardown is guaranteed even on force-quit. Additionally the sidecar records child PIDs to a lockfile and reaps strays on next start.
 
 **Quit with work in flight.** Closing the window hides to tray and does not stop runs. Quitting prompts if any agent is active, and always tears down the job object.
 

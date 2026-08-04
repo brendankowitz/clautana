@@ -1509,46 +1509,115 @@ git commit -m "feat(runtime): port AgentSession onto the backend seam and event 
 ## Task 7: ClaudeBackend
 
 **Files:**
-- Create: `packages/runtime/src/backend/ClaudeBackend.ts`, `packages/runtime/src/backend/resolveClaudeCli.ts`
-- Test: `packages/runtime/test/backend/resolveClaudeCli.test.ts`
-- Reference (read-only): `src/multi-agent-harness/src/coordinator/AgentSession.ts:122-200`, `src/multi-agent-harness/src/coordinator/AgentPool.ts:139-156`
+- Create: `packages/runtime/src/backend/mapSdkMessage.ts`, `packages/runtime/src/backend/ClaudeBackend.ts`
+- Test: `packages/runtime/test/backend/mapSdkMessage.test.ts`
 
 **Interfaces:**
-- Consumes: `AgentBackend`, `AgentBackendConfig`, `BackendEvent` (Task 5).
-- Produces: `class ClaudeBackend implements AgentBackend` with `constructor(config: AgentBackendConfig)`; `function resolveClaudeCli(candidates: string[], exists: (p: string) => boolean): string` — picks the first candidate that exists, throws a named error listing all candidates otherwise.
+- Consumes: `AgentBackend`, `AgentBackendConfig`, `BackendEvent`, `BackendCapabilities` (Task 5).
+- Produces: `interface SdkMessage` (a structural subset of what the SDK yields); `function mapSdkMessage(message: SdkMessage): BackendEvent[]` — pure, total, returns `[]` for message types we ignore; `class ClaudeBackend implements AgentBackend` with `constructor(config: AgentBackendConfig)`.
 
-`ClaudeBackend` is not unit-tested against the real SDK — it is covered by the contract test in Task 11. Only the CLI resolution, which is where the extension's packaging bug lived, gets unit tests.
+> **Plan revision (discovered during execution).** The original Task 7 built a
+> `resolveClaudeCli()` helper to point the SDK at its own bundled `cli.js`,
+> carrying forward what `AgentPool.ts:139` did in the extension. **That file does
+> not exist in `@anthropic-ai/claude-agent-sdk` 0.3.x.** The package now ships
+> `sdk.mjs`, `bridge.mjs`, `extractFromBunfs.js`, and a `manifest.json` listing
+> per-platform prebuilt `claude` binaries; `sdk.d.ts` documents
+> `pathToClaudeCodeExecutable` as *"Path to the Claude Code executable. Uses the
+> built-in executable if not specified."*
+>
+> The correct integration is therefore to **omit `pathToClaudeCodeExecutable`
+> entirely** and let the SDK resolve its own executable. `resolveClaudeCli` is
+> deleted, not ported. An env-var escape hatch is kept for the rare case of
+> pointing at a specific build.
+>
+> This removes the task's only pure unit under test, so the seam moves to
+> `mapSdkMessage` — a total function from SDK message to `BackendEvent[]`. That
+> is the part with real branching logic and the part most likely to break on an
+> SDK upgrade, so it is the better test target regardless.
+
+`ClaudeBackend` itself is exercised by the stdio contract test in Task 11, not by unit tests — it is a thin adapter around a network-bound SDK.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `packages/runtime/test/backend/resolveClaudeCli.test.ts`:
+Create `packages/runtime/test/backend/mapSdkMessage.test.ts`:
 
 ```ts
 import { describe, it, expect } from "vitest";
-import { resolveClaudeCli } from "../../src/backend/resolveClaudeCli.js";
+import { mapSdkMessage } from "../../src/backend/mapSdkMessage.js";
 
-describe("resolveClaudeCli", () => {
-  it("returns the first candidate that exists", () => {
-    const resolved = resolveClaudeCli(
-      ["/a/cli.js", "/b/cli.js"],
-      (path) => path === "/b/cli.js",
-    );
-    expect(resolved).toBe("/b/cli.js");
+describe("mapSdkMessage", () => {
+  it("maps an assistant text block to a text event", () => {
+    const events = mapSdkMessage({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "hello" }] },
+    });
+    expect(events).toEqual([{ kind: "text", content: "hello" }]);
   });
 
-  it("prefers an earlier candidate when several exist", () => {
-    const resolved = resolveClaudeCli(["/a/cli.js", "/b/cli.js"], () => true);
-    expect(resolved).toBe("/a/cli.js");
+  it("maps a tool_use block to a toolCall event", () => {
+    const events = mapSdkMessage({
+      type: "assistant",
+      message: {
+        content: [{ type: "tool_use", id: "t1", name: "Read", input: { path: "a.ts" } }],
+      },
+    });
+    expect(events).toEqual([
+      { kind: "toolCall", toolCallId: "t1", name: "Read", arguments: { path: "a.ts" } },
+    ]);
   });
 
-  it("throws listing every candidate when none exist", () => {
-    expect(() => resolveClaudeCli(["/a/cli.js", "/b/cli.js"], () => false)).toThrow(
-      /\/a\/cli\.js[\s\S]*\/b\/cli\.js/,
-    );
+  it("maps every block in a multi-block message, in order", () => {
+    const events = mapSdkMessage({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "text", text: "first" },
+          { type: "tool_use", id: "t1", name: "Read", input: {} },
+          { type: "text", text: "second" },
+        ],
+      },
+    });
+    expect(events.map((e) => e.kind)).toEqual(["text", "toolCall", "text"]);
   });
 
-  it("throws when given no candidates", () => {
-    expect(() => resolveClaudeCli([], () => true)).toThrow(/no candidate/i);
+  it("maps a result message to a result event", () => {
+    const events = mapSdkMessage({
+      type: "result",
+      total_cost_usd: 0.0125,
+      usage: { input_tokens: 100, output_tokens: 50 },
+    });
+    expect(events).toEqual([{ kind: "result", costUsd: 0.0125, tokensUsed: 150 }]);
+  });
+
+  it("defaults missing cost and usage to zero", () => {
+    const events = mapSdkMessage({ type: "result" });
+    expect(events).toEqual([{ kind: "result", costUsd: 0, tokensUsed: 0 }]);
+  });
+
+  it("returns no events for message types we do not surface", () => {
+    expect(mapSdkMessage({ type: "system" })).toEqual([]);
+    expect(mapSdkMessage({ type: "user" })).toEqual([]);
+  });
+
+  it("skips an assistant message with no content", () => {
+    expect(mapSdkMessage({ type: "assistant" })).toEqual([]);
+    expect(mapSdkMessage({ type: "assistant", message: {} })).toEqual([]);
+  });
+
+  it("skips content blocks of unknown type without throwing", () => {
+    const events = mapSdkMessage({
+      type: "assistant",
+      message: { content: [{ type: "thinking" }, { type: "text", text: "kept" }] },
+    });
+    expect(events).toEqual([{ kind: "text", content: "kept" }]);
+  });
+
+  it("skips a text block with no text and a tool_use with no name", () => {
+    const events = mapSdkMessage({
+      type: "assistant",
+      message: { content: [{ type: "text" }, { type: "tool_use", id: "t1" }] },
+    });
+    expect(events).toEqual([]);
   });
 });
 ```
@@ -1556,63 +1625,17 @@ describe("resolveClaudeCli", () => {
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-npm -w @clautana/runtime test resolveClaudeCli
+npm -w @clautana/runtime test mapSdkMessage
 ```
 
-Expected: FAIL — cannot resolve `../../src/backend/resolveClaudeCli.js`.
+Expected: FAIL — cannot resolve `../../src/backend/mapSdkMessage.js`.
 
-- [ ] **Step 3: Write packages/runtime/src/backend/resolveClaudeCli.ts**
+- [ ] **Step 3: Write packages/runtime/src/backend/mapSdkMessage.ts**
 
 ```ts
-import { existsSync } from "node:fs";
+import type { BackendEvent } from "./AgentBackend.js";
 
-/**
- * The SDK ships its own cli.js; we point the SDK at that copy rather than
- * requiring a global `claude` install. Packaged and dev layouts differ, so the
- * caller supplies candidates in priority order.
- */
-export function resolveClaudeCli(
-  candidates: string[],
-  exists: (path: string) => boolean = existsSync,
-): string {
-  if (candidates.length === 0) {
-    throw new Error("Cannot resolve the Claude CLI: no candidate paths were supplied");
-  }
-  for (const candidate of candidates) {
-    if (exists(candidate)) {
-      return candidate;
-    }
-  }
-  throw new Error(
-    `Cannot resolve the Claude CLI. Tried:\n${candidates.map((c) => `  ${c}`).join("\n")}`,
-  );
-}
-```
-
-- [ ] **Step 4: Run the test to verify it passes**
-
-```bash
-npm -w @clautana/runtime test resolveClaudeCli
-```
-
-Expected: PASS, 4 tests.
-
-- [ ] **Step 5: Write packages/runtime/src/backend/ClaudeBackend.ts**
-
-```ts
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
-import type {
-  AgentBackend,
-  AgentBackendConfig,
-  BackendCapabilities,
-  BackendEvent,
-} from "./AgentBackend.js";
-import { resolveClaudeCli } from "./resolveClaudeCli.js";
-
-const require = createRequire(import.meta.url);
-
-interface SdkContentBlock {
+export interface SdkContentBlock {
   type: string;
   text?: string;
   id?: string;
@@ -1620,13 +1643,73 @@ interface SdkContentBlock {
   input?: Record<string, unknown>;
 }
 
-interface SdkMessage {
+/** Structural subset of the SDK's message stream that this backend consumes. */
+export interface SdkMessage {
   type: string;
   message?: { content?: SdkContentBlock[] };
   session_id?: string;
   total_cost_usd?: number;
   usage?: { input_tokens?: number; output_tokens?: number };
 }
+
+/**
+ * Total mapping from one SDK message to zero or more backend events.
+ *
+ * Unknown message types and unknown content blocks yield nothing rather than
+ * throwing: the SDK adds block types over time, and an unrecognised one must
+ * not abort a run in progress.
+ */
+export function mapSdkMessage(message: SdkMessage): BackendEvent[] {
+  if (message.type === "assistant") {
+    const events: BackendEvent[] = [];
+    for (const block of message.message?.content ?? []) {
+      if (block.type === "text" && block.text !== undefined) {
+        events.push({ kind: "text", content: block.text });
+      } else if (block.type === "tool_use" && block.name !== undefined) {
+        events.push({
+          kind: "toolCall",
+          toolCallId: block.id ?? "",
+          name: block.name,
+          arguments: block.input ?? {},
+        });
+      }
+    }
+    return events;
+  }
+
+  if (message.type === "result") {
+    const usage = message.usage ?? {};
+    return [
+      {
+        kind: "result",
+        costUsd: message.total_cost_usd ?? 0,
+        tokensUsed: (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0),
+      },
+    ];
+  }
+
+  return [];
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+```bash
+npm -w @clautana/runtime test mapSdkMessage
+```
+
+Expected: PASS, 9 tests.
+
+- [ ] **Step 5: Write packages/runtime/src/backend/ClaudeBackend.ts**
+
+```ts
+import type {
+  AgentBackend,
+  AgentBackendConfig,
+  BackendCapabilities,
+  BackendEvent,
+} from "./AgentBackend.js";
+import { mapSdkMessage, type SdkMessage } from "./mapSdkMessage.js";
 
 export class ClaudeBackend implements AgentBackend {
   readonly capabilities: BackendCapabilities = { mcp: true, interrupt: true, cost: true };
@@ -1643,6 +1726,10 @@ export class ClaudeBackend implements AgentBackend {
 
     const stderrChunks: string[] = [];
 
+    // pathToClaudeCodeExecutable is deliberately omitted: SDK 0.3.x resolves its
+    // own built-in executable. Set CLAUTANA_CLAUDE_EXECUTABLE only to override.
+    const override = process.env["CLAUTANA_CLAUDE_EXECUTABLE"];
+
     const result = query({
       prompt,
       options: {
@@ -1654,40 +1741,18 @@ export class ClaudeBackend implements AgentBackend {
         systemPrompt: this.config.systemPrompt,
         abortController: controller,
         resume: this.sessionId,
-        pathToClaudeCodeExecutable:
-          this.config.pathToClaudeCodeExecutable ?? ClaudeBackend.defaultCliPath(),
+        ...(override ? { pathToClaudeCodeExecutable: override } : {}),
         stderr: (data: string) => stderrChunks.push(data),
       },
     });
 
     for await (const raw of result) {
       const message = raw as SdkMessage;
-
       if (message.session_id) {
         this.sessionId = message.session_id;
       }
-
-      if (message.type === "assistant") {
-        for (const block of message.message?.content ?? []) {
-          if (block.type === "text" && block.text) {
-            yield { kind: "text", content: block.text };
-          } else if (block.type === "tool_use" && block.name) {
-            yield {
-              kind: "toolCall",
-              toolCallId: block.id ?? "",
-              name: block.name,
-              arguments: block.input ?? {},
-            };
-          }
-        }
-      } else if (message.type === "result") {
-        const usage = message.usage ?? {};
-        yield {
-          kind: "result",
-          costUsd: message.total_cost_usd ?? 0,
-          tokensUsed: (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0),
-          sessionId: this.sessionId,
-        };
+      for (const event of mapSdkMessage(message)) {
+        yield event;
       }
     }
 
@@ -1700,38 +1765,16 @@ export class ClaudeBackend implements AgentBackend {
   async dispose(): Promise<void> {
     this.sessionId = undefined;
   }
-
-  /**
-   * Packaged (SEA) and dev layouts resolve the SDK differently, so both are
-   * offered in priority order.
-   */
-  static defaultCliPath(): string {
-    const candidates: string[] = [];
-
-    if (process.env["CLAUTANA_CLAUDE_CLI"]) {
-      candidates.push(process.env["CLAUTANA_CLAUDE_CLI"]);
-    }
-    candidates.push(join(process.cwd(), "resources", "claude-cli", "cli.js"));
-
-    try {
-      const sdkEntry = require.resolve("@anthropic-ai/claude-agent-sdk");
-      candidates.push(join(dirname(sdkEntry), "cli.js"));
-    } catch {
-      // Not resolvable in a packaged SEA build; the resources path covers it.
-    }
-
-    return resolveClaudeCli(candidates);
-  }
 }
 ```
 
-- [ ] **Step 6: Verify the whole runtime package typechecks**
+- [ ] **Step 6: Verify the whole runtime package typechecks and all tests pass**
 
 ```bash
 npm -w @clautana/runtime run typecheck && npm -w @clautana/runtime test
 ```
 
-Expected: typecheck clean; all tests pass (24 so far).
+Expected: typecheck clean; all tests pass.
 
 - [ ] **Step 7: Commit**
 
@@ -1741,6 +1784,7 @@ git commit -m "feat(runtime): add ClaudeBackend on claude-agent-sdk 0.3"
 ```
 
 ---
+
 
 ## Task 8: Project registry and config
 
@@ -2882,8 +2926,9 @@ Create `packages/runtime/build.mjs`:
 ```js
 import { build } from "esbuild";
 
-// The Claude SDK's cli.js ships as a resource next to the binary and is spawned
-// as a child process, so it must stay external rather than being inlined here.
+// The Claude SDK resolves and spawns its own platform executable at runtime and
+// carries non-JS assets (manifest.json, manifest.zst.json), so it must stay
+// external rather than being inlined into the bundle.
 await build({
   entryPoints: ["dist/main.js"],
   bundle: true,
@@ -3030,7 +3075,7 @@ In `apps/desktop/src-tauri/tauri.conf.json`, set `bundle.externalBin` and restri
     "active": true,
     "targets": ["msi"],
     "externalBin": ["binaries/clautana-runtime"],
-    "resources": ["resources/claude-cli/*"]
+    "resources": ["resources/claude-agent-sdk/**/*"]
   }
 }
 ```
@@ -3071,7 +3116,7 @@ Expected: FAIL — `backoff_delay_ms` not found.
 ```rust
 //! Guarantees the sidecar and every process it spawns die with the app.
 //!
-//! The Claude SDK spawns cli.js children; without OS-level containment a
+//! The Claude SDK spawns a `claude` executable as a child; without containment a
 //! force-quit can strand them, burning tokens with no UI to stop them.
 
 #[cfg(windows)]
@@ -3727,13 +3772,31 @@ git commit -m "feat(desktop): add React UI for project, agent, and output stream
 - Consumes: everything.
 - Produces: a documented, buildable app and a repository with the extension removed.
 
-- [ ] **Step 1: Stage the Claude CLI resource**
+- [ ] **Step 1: Stage the Claude Agent SDK next to the sidecar binary**
+
+> **Plan revision (discovered during execution).** This step originally copied
+> `node_modules/@anthropic-ai/claude-agent-sdk/cli.js`. **That file does not exist
+> in SDK 0.3.x** — the package ships `sdk.mjs`, `bridge.mjs`,
+> `extractFromBunfs.js`, and `manifest.json`/`manifest.zst.json`, and resolves its
+> own platform executable at runtime. The SDK is marked `external` in the esbuild
+> bundle (Task 12), so its whole package directory must ship alongside the sidecar
+> binary instead.
 
 ```bash
-mkdir -p apps/desktop/src-tauri/resources/claude-cli && cp node_modules/@anthropic-ai/claude-agent-sdk/cli.js apps/desktop/src-tauri/resources/claude-cli/cli.js
+mkdir -p apps/desktop/src-tauri/resources/claude-agent-sdk && cp -r node_modules/@anthropic-ai/claude-agent-sdk/. apps/desktop/src-tauri/resources/claude-agent-sdk/
 ```
 
-Expected: `apps/desktop/src-tauri/resources/claude-cli/cli.js` exists.
+Expected: `apps/desktop/src-tauri/resources/claude-agent-sdk/sdk.mjs` and `manifest.json` exist.
+
+Then confirm the sidecar binary can actually load the SDK from that location — an
+`external` import that cannot resolve at runtime is the failure mode this step
+exists to prevent:
+
+```bash
+node -e "process.chdir('apps/desktop/src-tauri/resources/claude-agent-sdk'); import('./sdk.mjs').then(m => console.log('SDK loads, query present:', typeof m.query === 'function')).catch(e => { console.error('SDK FAILED TO LOAD:', e.message); process.exit(1); })"
+```
+
+Expected: `SDK loads, query present: true`. If it fails, resolve the loading problem before continuing — Task 16's smoke test cannot pass without it.
 
 - [ ] **Step 2: Build the full app**
 
