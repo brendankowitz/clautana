@@ -423,8 +423,14 @@ FodyWeavers.xsd
 *.msp
 
 # Desktop pivot
+# Re-include workspace dirs first: the NuGet pattern at line 216 masks them.
+# These MUST precede the ignore rules below - last matching pattern wins.
+!/packages/*/
+!/apps/*/
+
+# Build outputs and dependencies, re-ignored after the negations above.
 node_modules/
 dist/
+packages/runtime/build/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/binaries/
-packages/runtime/build/
