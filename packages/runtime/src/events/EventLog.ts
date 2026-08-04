@@ -40,6 +40,8 @@ export class EventLog {
     if (this._closed) {
       throw new Error("EventLog is closed");
     }
+    // seq does not roll back on write failure. Sequence gaps are harmless and accepted;
+    // sequence reuse is prohibited to prevent two different events claiming the same seq.
     const event = {
       ...draft,
       seq: ++this._lastSeq,
@@ -47,10 +49,13 @@ export class EventLog {
       timestamp: new Date().toISOString(),
     } as RuntimeEvent;
 
-    this._writeQueue = this._writeQueue.then(() =>
-      appendFile(this.filePath, `${JSON.stringify(event)}\n`, "utf8"),
-    );
-    await this._writeQueue;
+    // Chain writes so concurrent appends cannot interleave. Swallow prior write failures
+    // so one failure does not poison the queue for all future writes.
+    const attempt = this._writeQueue
+      .catch(() => {})                    // never inherit a prior write's failure
+      .then(() => appendFile(this.filePath, `${JSON.stringify(event)}\n`, "utf8"));
+    this._writeQueue = attempt.catch(() => {}); // successor writes are not blocked
+    await attempt;                        // this caller still sees its own error
     return event;
   }
 
