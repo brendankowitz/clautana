@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   PROTOCOL_VERSION,
   isRuntimeEvent,
+  RUNTIME_EVENT_TYPES,
   type RuntimeEvent,
 } from "../src/index.js";
 
@@ -35,5 +36,19 @@ describe("protocol", () => {
   it("rejects a non-object", () => {
     expect(isRuntimeEvent(null)).toBe(false);
     expect(isRuntimeEvent("agent.output")).toBe(false);
+  });
+
+  it("pins RUNTIME_EVENT_TYPES to the expected eight event types", () => {
+    const expectedTypes: RuntimeEvent["type"][] = [
+      "run.started",
+      "run.ended",
+      "agent.spawned",
+      "agent.status",
+      "agent.output",
+      "agent.toolCall",
+      "agent.result",
+      "agent.error",
+    ];
+    expect(RUNTIME_EVENT_TYPES).toEqual(expectedTypes);
   });
 });
