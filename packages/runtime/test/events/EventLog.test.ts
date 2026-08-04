@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach, vi, afterAll } from "vitest";
-import { mkdtemp, rm, readFile, appendFile as realAppendFile } from "node:fs/promises";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtemp, rm, readFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventLog } from "../../src/events/EventLog.js";
@@ -108,20 +108,38 @@ describe("EventLog", () => {
     await log.close();
   });
 
-  it("close() succeeds even if prior writes occurred", async () => {
+  it("survives a write failure: later appends still reach disk and close() resolves", async () => {
     const log = await EventLog.open(dir, "run-1");
+    const filePath = join(dir, "run-1", "events.jsonl");
 
-    // Append several events
-    await log.append({ type: "agent.status", agentId: "a", status: "idle" });
-    await log.append({ type: "agent.status", agentId: "b", status: "processing" });
+    const first = await log.append({ type: "agent.status", agentId: "a", status: "idle" });
+    expect(first.seq).toBe(1);
 
-    // close() should succeed without throwing
+    // Make the write target un-writable as a file: put a directory in its place.
+    await rm(filePath, { force: true });
+    await mkdir(filePath);
+
+    await expect(
+      log.append({ type: "agent.status", agentId: "a", status: "processing" }),
+    ).rejects.toThrow();
+
+    // Restore a writable path.
+    await rm(filePath, { recursive: true, force: true });
+
+    // The queue must NOT be poisoned: this append has to actually reach disk.
+    const third = await log.append({ type: "agent.status", agentId: "a", status: "complete" });
+
+    // Seq gap is the ruled behaviour: 2 was consumed by the failed write and is
+    // never reused.
+    expect(third.seq).toBe(3);
+
+    const raw = await readFile(filePath, "utf8");
+    const lines = raw.trim().split("\n");
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!).seq).toBe(3);
+
+    // close() must resolve, not inherit the earlier rejection.
     await expect(log.close()).resolves.toBeUndefined();
-
-    // Verify the log is now closed and cannot append
-    await expect(log.append({ type: "agent.status", agentId: "c", status: "complete" })).rejects.toThrow(
-      "EventLog is closed",
-    );
   });
 
   it("stops reading at corrupt-shape JSON that is not a valid runtime event", async () => {
