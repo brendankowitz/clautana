@@ -3446,8 +3446,27 @@ git commit -m "feat(desktop): add system tray with hide-on-close window lifecycl
 ## Task 15: React UI — project, agent, and streaming output
 
 **Files:**
-- Create: `apps/desktop/src/rpc.ts`, `apps/desktop/src/App.tsx`, `apps/desktop/src/components/OutputStream.tsx`
+- Create: `apps/desktop/src/styles/tokens.css`, `apps/desktop/src/rpc.ts`, `apps/desktop/src/App.tsx`, `apps/desktop/src/components/OutputStream.tsx`
 - Test: `apps/desktop/test/rpc.test.ts`
+
+> **Visual design (added during execution).** Read
+> [docs/desktop/design-reference.md](../../desktop/design-reference.md) before writing any
+> markup. It captures the adopted design language — Windows 11 Fluent, dark,
+> information-dense — imported from the "Workbench workflow automation platform"
+> design project, whose mockup covers this product's own later slices (steps,
+> triggers, cron, MCP servers, token budgets, live log).
+>
+> Create `apps/desktop/src/styles/tokens.css` from the token block in that
+> document verbatim, import it once at the app entry, and reference only
+> `var(--…)` in components — no hard-coded hex values anywhere in `src/`.
+>
+> Three things are easy to get wrong and matter: the type scale is small on
+> purpose (11–13.5px body — do not inflate it to web defaults); text on a filled
+> accent surface is `--accent-fg` (`#001a26`), never white; and agent output must
+> use `--font-mono`. Map status events to colour as that document specifies.
+>
+> The functional requirements below are unchanged — styling is additive, not a
+> licence to alter behaviour or the RPC contract.
 
 **Interfaces:**
 - Consumes: Tauri command `rpc_call`; Tauri event `runtime-event`; `RuntimeEvent`, `isRuntimeEvent` from `@clautana/protocol`.
