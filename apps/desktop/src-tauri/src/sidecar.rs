@@ -86,7 +86,26 @@ impl Runtime {
         Ok(runtime)
     }
 
+    /// Whether `start()` should skip spawning entirely because `shutdown()`
+    /// has already begun (or completed). Extracted from `start()` itself
+    /// (which needs a live `AppHandle` to do anything else) so this specific
+    /// gate is unit-testable: without it, a crash-restart sleeping through
+    /// its backoff window (up to `MAX_BACKOFF_MS` after the crash) ignores a
+    /// `shutdown()` call that raced ahead of it and resurrects a sidecar
+    /// *after* `shutdown()` already tore everything else down.
+    fn shutdown_in_progress(&self) -> bool {
+        self.shutting_down.load(Ordering::SeqCst)
+    }
+
     fn start(self: Arc<Self>, app: AppHandle) -> Result<(), String> {
+        if self.shutdown_in_progress() {
+            self.log.log(
+                Source::Shell,
+                "start: shutdown already in progress, skipping sidecar (re)spawn",
+            );
+            return Ok(());
+        }
+
         self.ready.store(false, Ordering::SeqCst);
 
         let attempt = self.restart_attempt.load(Ordering::SeqCst);
@@ -193,8 +212,7 @@ impl Runtime {
                         this.log.log(Source::Sidecar, trimmed);
                     }
                     CommandEvent::Terminated(_) => {
-                        this.ready.store(false, Ordering::SeqCst);
-                        this.signal_terminated();
+                        this.on_terminated();
 
                         // Fail any calls still waiting on a response rather
                         // than leaving their awaiters parked forever.
@@ -202,7 +220,7 @@ impl Runtime {
                             drop(tx);
                         }
 
-                        if this.shutting_down.load(Ordering::SeqCst) {
+                        if this.shutdown_in_progress() {
                             // Intentional teardown (see `shutdown()`) — do
                             // not resurrect the process.
                             return;
@@ -246,6 +264,29 @@ impl Runtime {
         if let Some(tx) = self.shutdown_signal.lock().unwrap().take() {
             let _ = tx.send(());
         }
+    }
+
+    /// Resets per-run state after the sidecar process exits, before the
+    /// caller decides whether to restart it. Runs unconditionally on every
+    /// `Terminated` event, whether the exit was a crash or `shutdown()`'s own
+    /// stdin-close.
+    ///
+    /// Clearing `self.child` here matters beyond bookkeeping: before this
+    /// fix, a `Terminated` event left the slot populated with a
+    /// `CommandChild` for a process that no longer existed. A `shutdown()`
+    /// call landing in that window would take that dead handle, close its
+    /// (already-gone) stdin, wait out the full `SHUTDOWN_GRACE_MS` for a
+    /// `Terminated` that already fired, and then fall back to
+    /// `job::kill_pid(pid)` on a PID that has been free since — potentially
+    /// as long as the crash-restart backoff runs (up to `MAX_BACKOFF_MS`).
+    /// `TerminateProcess` on a *reused* PID can kill an unrelated,
+    /// same-user process. Clearing the slot makes `shutdown()`'s
+    /// `let Some(child) = ... else { return }` fire instead, skipping the
+    /// kill fallback entirely once the child is already known dead.
+    fn on_terminated(&self) {
+        self.ready.store(false, Ordering::SeqCst);
+        *self.child.lock().unwrap() = None;
+        self.signal_terminated();
     }
 
     async fn wait_ready(&self) {
@@ -303,7 +344,16 @@ impl Runtime {
         self.shutting_down.store(true, Ordering::SeqCst);
 
         let child = self.child.lock().unwrap().take();
-        let Some(child) = child else { return };
+        let Some(child) = child else {
+            // `on_terminated()` already cleared the slot - the sidecar is
+            // already dead (crashed, or a previous `shutdown()` already
+            // handled it). There is nothing to close and no PID we can
+            // trust enough to fall back to `job::kill_pid` on: that PID may
+            // already have been reused by an unrelated process during a
+            // restart backoff window.
+            self.log.log(Source::Shell, "shutdown: no running sidecar to tear down");
+            return;
+        };
         let pid = child.pid();
 
         self.log.log(Source::Shell, &format!("shutdown: closing sidecar stdin (pid {pid})"));
@@ -562,5 +612,75 @@ mod tests {
 
         assert!(result.is_err());
         assert!(runtime.pending.lock().unwrap().is_empty());
+    }
+
+    // -- F2 regression coverage: restart/shutdown interleavings. `start()`
+    // and `shutdown()` can't be driven end-to-end here because a real
+    // `CommandChild` only comes from a live `AppHandle`'s shell plugin
+    // (`Command::new`/`spawn` are `pub(crate)` to tauri_plugin_shell, not
+    // constructible from this crate without actually spawning a process
+    // through a running Tauri app). What follows tests the two extracted,
+    // AppHandle-free pieces the fix is built from; the full end-to-end
+    // interleaving (a real crash-restart asleep in backoff while a real
+    // `AppHandle::exit` runs `shutdown()`) would need a live app and is not
+    // covered by an automated test here.
+
+    #[test]
+    fn start_would_be_skipped_once_shutdown_has_begun() {
+        // Regression coverage for finding #1: `start()`'s very first
+        // statement is `if self.shutdown_in_progress() { return Ok(()); }`.
+        // This is the gate that stops a crash-restart's sleeping task from
+        // resurrecting a sidecar after a `shutdown()` call raced ahead of it
+        // during the (up to 30s) backoff window.
+        let runtime = test_runtime();
+        assert!(
+            !runtime.shutdown_in_progress(),
+            "a fresh Runtime must not report a shutdown already in progress"
+        );
+
+        runtime.shutting_down.store(true, Ordering::SeqCst);
+
+        assert!(
+            runtime.shutdown_in_progress(),
+            "start() would not have skipped spawning after shutdown() set shutting_down"
+        );
+    }
+
+    #[tokio::test]
+    async fn on_terminated_wakes_a_shutdown_that_is_already_waiting() {
+        // `on_terminated()` must still complete an in-flight `shutdown()`
+        // wait (via `signal_terminated()`) exactly as the pre-fix code did -
+        // the extraction in this fix must not have dropped that behavior
+        // while adding the child-clearing and ready-reset steps.
+        let runtime = test_runtime();
+
+        let (tx, rx) = oneshot::channel();
+        *runtime.shutdown_signal.lock().unwrap() = Some(tx);
+        runtime.ready.store(true, Ordering::SeqCst);
+
+        runtime.on_terminated();
+
+        assert!(!runtime.ready.load(Ordering::SeqCst), "on_terminated() did not clear `ready`");
+        let waited = tokio::time::timeout(Duration::from_millis(50), rx).await;
+        assert!(matches!(waited, Ok(Ok(()))), "on_terminated() did not wake the waiting shutdown()");
+    }
+
+    #[tokio::test]
+    async fn shutdown_is_a_safe_noop_once_the_child_slot_is_already_cleared() {
+        // Regression coverage for finding #2's second half: once
+        // `on_terminated()` has cleared `self.child` (simulated here without
+        // a real CommandChild, since `child` already starts `None` in
+        // `test_runtime()`), a `shutdown()` call must return via the
+        // `let Some(child) = ... else { ... }` branch - no wait, no
+        // `job::kill_pid` fallback on a PID that might already have been
+        // reused. This does not exercise the Some(child) -> None transition
+        // itself (that needs a live spawned process), only the safety net
+        // that transition lands in.
+        let runtime = test_runtime();
+
+        runtime.shutdown().await;
+
+        assert!(runtime.shutting_down.load(Ordering::SeqCst));
+        assert!(runtime.shutdown_signal.lock().unwrap().is_none());
     }
 }
