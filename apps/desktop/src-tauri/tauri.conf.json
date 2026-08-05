@@ -7,6 +7,7 @@
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build",
+    "beforeBundleCommand": "node src-tauri/scripts/stage-sdk.mjs",
     "frontendDist": "../dist"
   },
   "app": {
@@ -31,6 +32,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/clautana-runtime"]
+    "externalBin": ["binaries/clautana-runtime"],
+    "resources": {
+      "resources/claude-agent-sdk/": "node_modules/@anthropic-ai/claude-agent-sdk/"
+    }
   }
 }
