@@ -8,6 +8,21 @@ const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = resolve(here, "..");
 const require = createRequire(import.meta.url);
 const isWindows = process.platform === "win32";
+const isLinux = process.platform === "linux";
+
+// Slice 1 targets Windows only; the Linux triple below is the brief's
+// original (unverified on this task) fallback branch, left in place but not
+// exercised or claimed to work. Any other platform (darwin, in particular)
+// is explicitly unsupported - failing loudly here beats silently mislabeling
+// the triple, which would produce a binary Tauri can't find under its
+// expected sidecar name and fail far from this cause.
+if (!isWindows && !isLinux) {
+  throw new Error(
+    `package:sea: unsupported platform "${process.platform}" - slice 1 targets Windows only ` +
+      "(Linux is best-effort). Build on win32 or extend this script deliberately before adding a new triple.",
+  );
+}
+
 const triple = isWindows ? "x86_64-pc-windows-msvc" : "x86_64-unknown-linux-gnu";
 const ext = isWindows ? ".exe" : "";
 
