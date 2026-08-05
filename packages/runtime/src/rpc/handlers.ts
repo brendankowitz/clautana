@@ -38,7 +38,7 @@ export function createHandlers(deps: HandlerDeps): Record<string, RpcHandler> {
       const profile = requireString(params, "profile");
       const config = deps.registry.get(projectId);
       if (!config) {
-        throw new Error(`Unknown projectId: ${projectId}`);
+        throw new InvalidParamsError(`Unknown projectId: ${projectId}`);
       }
       const agentId = await deps.pool.spawn({ projectId, config, profile });
       return { agentId, runId: deps.runId };
@@ -49,11 +49,26 @@ export function createHandlers(deps: HandlerDeps): Record<string, RpcHandler> {
       const text = requireString(params, "text");
       const session = deps.pool.get(agentId);
       if (!session) {
-        throw new Error(`Unknown agentId: ${agentId}`);
+        throw new InvalidParamsError(`Unknown agentId: ${agentId}`);
       }
       // Deliberately not awaited: the caller gets an immediate ack and follows
-      // progress on the event stream.
-      void session.sendPrompt(text);
+      // progress on the event stream. A prompt can run for minutes, so
+      // blocking the RPC response on it would stall the whole stdio channel.
+      //
+      // sendPrompt() is an async function whose FIRST statement can throw
+      // (when the agent is already mid-turn) - a synchronous throw inside an
+      // async function becomes a rejected promise, not a synchronous
+      // exception. Without this .catch, that rejection would be unhandled
+      // and Node (>=15) terminates the whole process on an unhandled
+      // rejection, taking the sidecar down over what should be a routine
+      // "you double-clicked Send" case. The failure is only logged, not
+      // surfaced as an agent.error event: HandlerDeps deliberately has no
+      // EventBus reference (only the onSubscribe callback), and widening it
+      // just for this one rejection path would be a bigger design change
+      // than this fix warrants.
+      void session.sendPrompt(text).catch((error: unknown) => {
+        console.error(`[rpc] agent.prompt failed for agent ${agentId}:`, error);
+      });
       return { ok: true };
     },
 
@@ -61,7 +76,7 @@ export function createHandlers(deps: HandlerDeps): Record<string, RpcHandler> {
       const agentId = requireString(params, "agentId");
       const session = deps.pool.get(agentId);
       if (!session) {
-        throw new Error(`Unknown agentId: ${agentId}`);
+        throw new InvalidParamsError(`Unknown agentId: ${agentId}`);
       }
       session.interrupt();
       return { ok: true };
@@ -71,7 +86,7 @@ export function createHandlers(deps: HandlerDeps): Record<string, RpcHandler> {
       const agentId = requireString(params, "agentId");
       const session = deps.pool.get(agentId);
       if (!session) {
-        throw new Error(`Unknown agentId: ${agentId}`);
+        throw new InvalidParamsError(`Unknown agentId: ${agentId}`);
       }
       await session.kill();
       return { ok: true };

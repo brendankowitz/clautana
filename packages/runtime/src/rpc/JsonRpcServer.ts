@@ -24,16 +24,49 @@ export class JsonRpcServer {
 
   attach(input: Readable, output: Writable): void {
     this.output = output;
+
+    // An unhandled 'error' event on an EventEmitter throws by default and
+    // kills the process - exactly the failure mode this layer exists to
+    // prevent. A broken pipe (the Rust shell dying, stdout closing) fires
+    // this on stdio streams, so both ends need a listener that just logs.
+    input.on("error", (error: unknown) => {
+      console.error("[rpc] input stream error:", error);
+    });
+    output.on("error", (error: unknown) => {
+      console.error("[rpc] output stream error:", error);
+    });
+
     const lines = createInterface({ input, crlfDelay: Infinity });
+    // readline's Interface proxies its input stream's 'error' event onto
+    // itself (`input.on('error', ...)` internally re-emits on `lines`), so
+    // without this listener an input error throws twice: once caught above,
+    // and once more - unhandled - from `lines` itself.
+    lines.on("error", (error: unknown) => {
+      console.error("[rpc] readline interface error:", error);
+    });
     lines.on("line", (line) => {
-      void this.handleLine(line).then((response) => {
-        if (response !== undefined) {
-          this.write(response);
-        }
-      });
+      void this.handleLine(line)
+        .then((response) => {
+          if (response !== undefined) {
+            this.write(response);
+          }
+        })
+        .catch((error: unknown) => {
+          // handleLine() already converts handler failures into error
+          // responses, so this only fires for something outside that
+          // contract - e.g. write() throwing synchronously because the
+          // output stream has already ended. Without this .catch, that
+          // becomes an unhandled rejection and takes the process down.
+          console.error("[rpc] failed to handle request line:", error);
+        });
     });
   }
 
+  /**
+   * Precondition: has no effect until attach() has been called at least
+   * once, since there is nowhere to write to before then. Pushing an event
+   * before attach() silently no-ops rather than buffering or throwing.
+   */
   pushEvent(event: RuntimeEvent): void {
     this.write(JSON.stringify({ method: "event", params: event }));
   }
