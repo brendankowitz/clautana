@@ -41,10 +41,6 @@ export class EventBus {
       let maxSeq = sinceSeq;
 
       for (const event of history) {
-        // If unsubscribed during replay, stop immediately.
-        if (!this.listeners.has(listener)) {
-          break;
-        }
         this.deliverDirect(listener, event);
         maxSeq = Math.max(maxSeq, event.seq);
       }
@@ -57,9 +53,16 @@ export class EventBus {
           maxSeq = Math.max(maxSeq, event.seq);
         }
       }
-    } finally {
+
       // Step 4: Switch the subscription to direct live delivery by removing the buffer.
+      // Buffer is now exhausted and will be garbage-collected.
       this.pendingBuffers.delete(listener);
+    } catch (error) {
+      // Step 4 (error path): Roll back the registration.
+      // If replay fails, the listener must not remain registered.
+      this.listeners.delete(listener);
+      this.pendingBuffers.delete(listener);
+      throw error;
     }
 
     // Step 5: Return unsubscribe function.
