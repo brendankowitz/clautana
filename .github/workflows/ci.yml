@@ -32,15 +32,25 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Test Rust shell
-        working-directory: ./apps/desktop/src-tauri
-        run: cargo test
+      - name: Build the sidecar binary
+        # Tauri's build script validates `bundle.externalBin` at compile time,
+        # so `cargo test` cannot even build without the sidecar present. The
+        # binary is gitignored (~88MB), so a clean checkout must produce it
+        # first. `package:sea` chains the bundle step, so this one command is
+        # sufficient.
+        run: npm -w @clautana/runtime run package:sea
 
       - name: Stage the Claude Agent SDK and verify it lands where the sidecar expects it
         # Exercises apps/desktop/src-tauri/scripts/stage-sdk.mjs directly -
         # the step tauri.conf.json's beforeBundleCommand runs before every
         # `tauri build` - so a refactor that breaks SDK staging (the fix for
         # this plan's highest-risk item) fails CI instead of staying green.
+        #
+        # This must run BEFORE `cargo test`: tauri.conf.json lists
+        # `resources/claude-agent-sdk` under bundle.resources, and Tauri's
+        # build script validates every resource path at compile time, so the
+        # crate will not build until the SDK is staged.
+        #
         # This does not run a full `tauri build` (Rust release compile +
         # WiX packaging): that's plausibly fast enough here too, but it
         # wasn't exercised against actual CI infrastructure from the agent
@@ -61,3 +71,7 @@ jobs:
             }
             console.log('SDK staged correctly:', required);
           "
+
+      - name: Test Rust shell
+        working-directory: ./apps/desktop/src-tauri
+        run: cargo test
