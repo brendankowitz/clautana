@@ -1,4 +1,5 @@
 mod job;
+mod logfile;
 mod sidecar;
 mod tray;
 

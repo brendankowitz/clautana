@@ -9,6 +9,7 @@ use tauri_plugin_shell::ShellExt;
 use tokio::sync::{oneshot, Notify};
 
 use crate::job::{self, ProcessGuard};
+use crate::logfile::{DiagnosticsLog, Source};
 
 const MAX_BACKOFF_MS: u64 = 30_000;
 
@@ -58,6 +59,12 @@ pub struct Runtime {
     /// every restart, since each restart spawns a brand-new task — that was
     /// the original design and never actually backed off.)
     restart_attempt: AtomicU32,
+    /// Durable record of sidecar stderr and this shell's own supervision
+    /// events, so a failure in a release build (no console — see
+    /// `main.rs`) is still explainable after the fact. Degrades silently to
+    /// `eprintln!` only if the file can't be opened or written; see
+    /// `logfile::DiagnosticsLog`.
+    log: DiagnosticsLog,
 }
 
 impl Runtime {
@@ -73,6 +80,7 @@ impl Runtime {
             shutting_down: AtomicBool::new(false),
             shutdown_signal: Mutex::new(None),
             restart_attempt: AtomicU32::new(0),
+            log: DiagnosticsLog::init(app),
         });
         runtime.clone().start(app.clone())?;
         Ok(runtime)
@@ -81,12 +89,23 @@ impl Runtime {
     fn start(self: Arc<Self>, app: AppHandle) -> Result<(), String> {
         self.ready.store(false, Ordering::SeqCst);
 
-        let (mut rx, child) = app
-            .shell()
-            .sidecar("clautana-runtime")
-            .map_err(|e| e.to_string())?
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        let attempt = self.restart_attempt.load(Ordering::SeqCst);
+        self.log.log(Source::Shell, &format!("spawn: starting sidecar (attempt {attempt})"));
+
+        let spawn_result = (|| -> Result<_, String> {
+            app.shell()
+                .sidecar("clautana-runtime")
+                .map_err(|e| e.to_string())?
+                .spawn()
+                .map_err(|e| e.to_string())
+        })();
+        let (mut rx, child) = match spawn_result {
+            Ok(pair) => pair,
+            Err(err) => {
+                self.log.log(Source::Shell, &format!("spawn failed (attempt {attempt}): {err}"));
+                return Err(err);
+            }
+        };
 
         let pid = child.pid();
 
@@ -103,6 +122,10 @@ impl Runtime {
         // AV/EDR policy that blocked `assign()` would also block a second
         // `OpenProcess`.
         if let Err(err) = self.guard.assign(pid) {
+            self.log.log(
+                Source::Shell,
+                &format!("assign failed for pid {pid}: {err}; killing orphaned sidecar"),
+            );
             let _ = child.kill();
             return Err(err);
         }
@@ -121,7 +144,9 @@ impl Runtime {
                         }
                     }
                     CommandEvent::Stderr(bytes) => {
-                        eprintln!("[runtime] {}", String::from_utf8_lossy(&bytes));
+                        // Captured verbatim, not parsed — Rust owns no
+                        // opinion about what the sidecar's stderr means.
+                        this.log.log(Source::Sidecar, &String::from_utf8_lossy(&bytes));
                     }
                     CommandEvent::Terminated(_) => {
                         this.ready.store(false, Ordering::SeqCst);
@@ -141,6 +166,12 @@ impl Runtime {
 
                         let attempt = this.restart_attempt.fetch_add(1, Ordering::SeqCst);
                         let delay = backoff_delay_ms(attempt);
+                        this.log.log(
+                            Source::Shell,
+                            &format!(
+                                "sidecar terminated unexpectedly; restarting (attempt {attempt}) after {delay}ms backoff"
+                            ),
+                        );
                         let _ = app.emit("runtime-status", "restarting");
                         tokio::time::sleep(Duration::from_millis(delay)).await;
 
@@ -151,7 +182,7 @@ impl Runtime {
                         // would) leaves the app looking alive while the
                         // supervisor is permanently dead. Surface it.
                         if let Err(err) = this.clone().start(app.clone()) {
-                            eprintln!("[runtime] restart failed permanently: {err}");
+                            this.log.log(Source::Shell, &format!("fatal: restart failed: {err}"));
                             let _ = app.emit("runtime-status", format!("fatal: restart failed: {err}"));
                         }
                         return;
@@ -231,6 +262,8 @@ impl Runtime {
         let Some(child) = child else { return };
         let pid = child.pid();
 
+        self.log.log(Source::Shell, &format!("shutdown: closing sidecar stdin (pid {pid})"));
+
         // Register a fresh, single-use completion signal *before* closing
         // stdin, so the `Terminated` event this triggers can't race ahead of
         // us starting to wait on it.
@@ -243,10 +276,21 @@ impl Runtime {
 
         let exited = tokio::time::timeout(Duration::from_millis(SHUTDOWN_GRACE_MS), rx).await;
 
-        if !matches!(exited, Ok(Ok(()))) {
+        if matches!(exited, Ok(Ok(()))) {
+            self.log.log(
+                Source::Shell,
+                &format!("shutdown: sidecar exited cleanly after stdin close (pid {pid})"),
+            );
+        } else {
             // Either the timeout elapsed, or the sender was dropped without
             // sending (shouldn't happen on this path, but treat the same as
             // "didn't confirm exit" rather than assuming success).
+            self.log.log(
+                Source::Shell,
+                &format!(
+                    "shutdown: sidecar did not exit within {SHUTDOWN_GRACE_MS}ms grace period; force-killing (pid {pid})"
+                ),
+            );
             self.shutdown_signal.lock().unwrap().take();
             let _ = job::kill_pid(pid);
         }
@@ -415,6 +459,7 @@ mod tests {
             shutting_down: AtomicBool::new(false),
             shutdown_signal: Mutex::new(None),
             restart_attempt: AtomicU32::new(0),
+            log: DiagnosticsLog::disabled(),
         }
     }
 
