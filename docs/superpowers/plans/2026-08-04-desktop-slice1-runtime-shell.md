@@ -3817,6 +3817,21 @@ node -e "process.chdir('apps/desktop/src-tauri/resources/claude-agent-sdk'); imp
 
 Expected: `SDK loads, query present: true`. If it fails, resolve the loading problem before continuing — Task 16's smoke test cannot pass without it.
 
+> **Resolution constraint (measured in Task 12).** The packaged SEA binary resolves
+> the SDK's dynamic `import()` by walking up from **`process.cwd()`** looking for
+> `node_modules` — **not** from the binary's own directory. Staging the SDK beside
+> the exe is therefore not sufficient on its own.
+>
+> Two workable options; pick one and verify it end-to-end rather than assuming:
+> 1. Have the Rust shell spawn the sidecar with a working directory that is (or is
+>    an ancestor of) a `node_modules` tree containing `@anthropic-ai/claude-agent-sdk`.
+> 2. Place a real `node_modules/@anthropic-ai/claude-agent-sdk/` next to the exe and
+>    always launch the sidecar with that directory as cwd.
+>
+> Whichever is chosen, prove it by running the PACKAGED binary — not `node dist/main.js` —
+> and confirming a real (non-fake) backend can load the SDK. This is the single most
+> likely way the installed app fails while every test still passes.
+
 - [ ] **Step 2: Build the full app**
 
 ```bash
