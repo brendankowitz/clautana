@@ -1,0 +1,50 @@
+:root {
+  /* Surfaces — separated by value, no shadows */
+  --bg-app: #101010;        /* window background */
+  --bg-panel: #1c1c1c;      /* primary panel */
+  --bg-panel-alt: #202020;  /* secondary panel */
+  --bg-raised: #272727;     /* cards, list rows */
+  --bg-control: #2d2d2d;    /* buttons, inputs, chips — the workhorse fill */
+  --bg-control-hover: #383838;
+
+  /* Borders */
+  --border: #303030;
+  --border-strong: #454545;
+
+  /* Text */
+  --fg: #c5c5c5;            /* body */
+  --fg-bright: #e6e6e6;     /* emphasis */
+  --fg-max: #ffffff;        /* headings, active state */
+  --fg-muted: #8b8b8b;      /* secondary, placeholders, labels */
+
+  /* Accent */
+  --accent: #60cdff;
+  --accent-hover: #7fd8ff;
+  --accent-press: #4cc2ff;
+  --accent-fg: #001a26;     /* text ON a filled accent surface */
+  --accent-wash: rgba(96, 205, 255, 0.14);
+  --accent-wash-strong: rgba(96, 205, 255, 0.3);
+
+  /* Status */
+  --success: #6ccb5f;
+  --warning: #fce100;
+  --danger: #ff99a4;
+  --danger-solid: #c42b1c;
+
+  /* Type */
+  --font: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: Consolas, 'Cascadia Mono', monospace;
+
+  /* Radii — 4px is the default; 8px for panels and cards */
+  --r-sm: 4px;
+  --r-md: 8px;
+}
+
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-thumb {
+  background: #4a4a4a; border-radius: 6px;
+  border: 4px solid transparent; background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: #5e5e5e; background-clip: content-box; }
+::-webkit-scrollbar-track { background: transparent; }
+::selection { background: rgba(96, 205, 255, 0.3); }

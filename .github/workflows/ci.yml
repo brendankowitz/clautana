@@ -8,10 +8,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./src/multi-agent-harness
+    runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -19,26 +16,48 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
-          cache-dependency-path: src/multi-agent-harness/package-lock.json
+          cache-dependency-path: package-lock.json
 
-      - name: Install Extension dependencies
+      - name: Install dependencies
         run: npm ci
 
-      - name: Install Webview dependencies
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test Rust shell
+        working-directory: ./apps/desktop/src-tauri
+        run: cargo test
+
+      - name: Stage the Claude Agent SDK and verify it lands where the sidecar expects it
+        # Exercises apps/desktop/src-tauri/scripts/stage-sdk.mjs directly -
+        # the step tauri.conf.json's beforeBundleCommand runs before every
+        # `tauri build` - so a refactor that breaks SDK staging (the fix for
+        # this plan's highest-risk item) fails CI instead of staying green.
+        # This does not run a full `tauri build` (Rust release compile +
+        # WiX packaging): that's plausibly fast enough here too, but it
+        # wasn't exercised against actual CI infrastructure from the agent
+        # session that wrote this workflow, so it's left as a follow-up
+        # rather than shipped unverified.
         run: |
-          cd webview-ui
-          npm ci
-
-      - name: Compile
-        run: npm run build
-
-      - name: Package extension
-        run: npm run package
-
-      - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: clautana-vsix
-          path: src/multi-agent-harness/*.vsix
+          node apps/desktop/src-tauri/scripts/stage-sdk.mjs
+          node -e "
+            const { existsSync } = require('node:fs');
+            const required = [
+              'apps/desktop/src-tauri/resources/claude-agent-sdk/sdk.mjs',
+              'apps/desktop/src-tauri/resources/claude-agent-sdk/manifest.json',
+            ];
+            const missing = required.filter((p) => !existsSync(p));
+            if (missing.length > 0) {
+              console.error('SDK staging did not produce expected files:', missing);
+              process.exit(1);
+            }
+            console.log('SDK staged correctly:', required);
+          "

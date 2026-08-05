@@ -2,65 +2,69 @@
 
 ## Project Overview
 
-**Clautana** (Claude + Cortana) is a VS Code extension that implements an AI-powered multi-agent orchestration system. It enables a primary "Orchestrator" agent to break down complex coding tasks, manage them via a Kanban board, and spawn specialist "Worker" agents to execute them.
+**Clautana** (Claude + Cortana) is a Tauri desktop application that runs
+Claude-backed agents outside any IDE. It previously shipped as a VS Code
+extension; that extension is retired as of v0.1.5 in favour of this
+standalone app (see [docs/desktop/README.md](docs/desktop/README.md)).
 
 ### Core Architecture
 
-*   **Orchestrator Agent (`OrchestratorAgent.ts`):** The central "brain" of the system. It receives user input, plans work, creates User Stories, and manages the lifecycle of worker agents. It uses the Model Context Protocol (MCP) to interact with the system.
-*   **Worker Agents:** Specialized agents spawned by the Orchestrator to perform specific tasks (e.g., "Backend Engineer", "Code Reviewer"). They operate independently but coordinate through the Orchestrator.
-*   **Agent Pool (`AgentPool.ts`):** Manages the execution environment for worker agents.
-*   **MCP (Model Context Protocol):** The communication standard used for agents to access tools (file system, memory, git, etc.).
-    *   `McpManager.ts`: Manages MCP server lifecycles (stdio/http transports).
-    *   `MailMcpServer.ts`: Handles inter-agent messaging.
-    *   `MemoryMcpServer.ts`: Provides persistent memory (facts, lessons, playbooks).
-*   **Kanban System:** Work is tracked as "User Stories" stored in `.clautana/workitems/`. This file-based system serves as the source of truth for task status.
-*   **Frontend:** A React-based webview (`webview-ui`) displays the chat interface, agent status, and Kanban board.
+Three processes:
+
+*   **Rust shell (`apps/desktop/src-tauri`):** Window, system tray, sidecar
+    supervision (spawn, restart with backoff, Job Object-based teardown),
+    and a durable diagnostics log. Owns no agent concepts — it routes
+    JSON-RPC payloads to and from the sidecar opaquely.
+*   **Node sidecar (`packages/runtime`):** All orchestration — agent
+    sessions (`AgentSession.ts`), the agent pool (`AgentPool.ts`), project
+    config, the durable event log, and the Claude Agent SDK integration
+    (`ClaudeBackend.ts`). Runs headless over stdio; the window is optional.
+    Packaged as a Node single-executable-application (SEA) binary.
+*   **React webview (`apps/desktop/src`):** One client of the sidecar's
+    event stream (`runtime-event`, `runtime-ready`, `runtime-status`).
+
+`packages/protocol` holds the shared JSON-RPC and event types consumed by
+both the UI and the sidecar.
 
 ## Key Directories
 
-*   `src/multi-agent-harness/`: The main extension source code.
-    *   `src/coordinator/`: Logic for the Orchestrator and Agent Pool.
-    *   `src/mcp/`: Implementations of MCP servers (Mail, Memory, etc.).
-    *   `src/kanban/`: Logic for managing work items and the file-based board.
-    *   `src/providers/`: VS Code UI providers (Tree Views, Webviews).
-*   `src/multi-agent-harness/webview-ui/`: The React frontend for the extension's UI.
-*   `docs/`: Project documentation and architectural decision records (ADRs).
-*   `.clautana/`: Runtime directory for agent state, memory, and work items.
+*   `apps/desktop/src-tauri/`: The Rust shell (window, tray, sidecar
+    supervision).
+*   `apps/desktop/src/`: The React webview.
+*   `packages/runtime/`: The Node sidecar — agent sessions, agent pool,
+    project registry, event log, Claude Agent SDK backend.
+*   `packages/protocol/`: Shared JSON-RPC and event types.
+*   `docs/`: Project documentation and architectural decision records
+    (ADRs); see `docs/desktop/README.md` for the desktop app specifically.
+*   `<project>/.clautana/`: Per-project runtime directory for agent state,
+    memory, and messages, created by "Open project…" — byte-compatible
+    with the retired extension's layout.
 
 ## Development & Build
 
 ### Prerequisites
-*   Node.js & npm
-*   VS Code
+*   Node 24+
+*   Rust (MSVC toolchain on Windows)
+*   Windows 11 (the only supported bundle target)
 
 ### Build Commands
-Run these from `src/multi-agent-harness/`:
+Run these from the repo root unless noted:
 
-*   **Build All:** `npm run build` (Builds both extension and webview)
-*   **Build Extension:** `npm run build:extension` (Webpack)
-*   **Build Webview:** `npm run build:webview` (Vite)
-*   **Watch Mode:** `npm run watch`
-
-### Running the Extension
-1.  Open the project in VS Code.
-2.  Press `F5` to launch the "Extension Host" window.
-3.  Use the command palette (`Ctrl+Shift+P`) to access Clautana commands (e.g., `Clautana: Open Clautana Panel`).
-
-## Orchestrator Logic & Workflow
-
-The Orchestrator follows a strict workflow defined in `OrchestratorAgent.ts`:
-
-1.  **Receive Task:** User submits a request via the chat panel.
-2.  **Plan:** Orchestrator analyzes the request and breaks it down.
-3.  **Create Stories:** Uses `create_workitem` to create Kanban cards (User Stories) for distinct units of work.
-    *   *Note:* Features are often referenced from `docs/features/`.
-4.  **Spawn Agents:** Uses `spawn_agent` to create workers, assigning them specific User Stories via `workItemId`.
-5.  **Monitor:** Orchestrator monitors progress, receiving messages from agents via `inbox`.
-6.  **Review:** Completed work is reviewed (often by a specialized "Reviewer" agent).
-7.  **Complete:** Orchestrator reports final success to the user.
+*   **Install:** `npm install`
+*   **Test:** `npm test` (all workspaces)
+*   **Build:** `npm run build`
+*   **Package the sidecar:** `npm -w @clautana/runtime run package:sea`
+*   **Dev (from `apps/desktop/`):** `npm run tauri dev`
+*   **Build the installer (from `apps/desktop/`):** `npm run tauri build`
 
 ## Conventions
 
-*   **MCP First:** Agents should rely on MCP tools for all interactions with the OS and IDE.
-*   **File-Based State:** The `.clautana` directory is used for persistence. Do not rely on in-memory state for long-term data.
-*   **React UI:** The UI is built with React and Vite, communicating with the extension backend via the VS Code Webview API.
+*   **File-Based State:** Each project's `.clautana/` directory is used for
+    persistence (config, memory, agents, messages, context, runs). Do not
+    rely on in-memory state for long-term data.
+*   **Sidecar owns orchestration:** Agent sessions, prompts, and the event
+    log all live in `packages/runtime`. The Rust shell and React webview
+    are both clients of it, not owners of agent state.
+*   **React UI:** The webview is built with React and Vite, communicating
+    with the Rust shell via a single `rpc_call` Tauri command and three
+    Tauri events.
