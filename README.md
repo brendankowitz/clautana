@@ -1,5 +1,9 @@
 # Clautana
 
+> **Note:** Clautana has moved from a VS Code extension to a standalone desktop
+> application. The extension is retired at v0.1.5. See
+> [docs/desktop/README.md](docs/desktop/README.md).
+
 <div align="center">
 
 ![Clautana Logo](https://raw.githubusercontent.com/brendankowitz/clautana/main/icon.png)
@@ -40,28 +44,9 @@ It transforms the "Feature-First" development lifecycle into an interactive IDE 
 
 ## 🛠️ Installation & Setup
 
-### Prerequisites
-
-*   **VS Code**: Version 1.84.0 or higher.
-*   **Claude Code CLI**: Installed and authenticated (`npm install -g @anthropic-ai/claude-code`).
-*   **Node.js & npm**: Required for building the extension from source.
-
-### Building from Source
-
-1.  Clone the repository:
-    ```bash
-    git clone https://github.com/ignixa/clautana.git
-    ```
-2.  Navigate to the extension directory:
-    ```bash
-    cd src/multi-agent-harness
-    ```
-3.  Install dependencies and build:
-    ```bash
-    npm install
-    npm run build
-    ```
-4.  **Launch**: Open the project in VS Code and press `F5` to start the Extension Host.
+Clautana is now a standalone Windows desktop application built on Tauri. See
+[docs/desktop/README.md](docs/desktop/README.md) for prerequisites,
+development setup, building the installer, and testing.
 
 ## 📖 Usage Guide
 
