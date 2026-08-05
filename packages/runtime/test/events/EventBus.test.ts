@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -75,5 +75,94 @@ describe("EventBus", () => {
     await bus.publish({ type: "agent.status", agentId: "a", status: "idle" });
 
     expect(seen).toHaveLength(1);
+  });
+
+  it("interleaves live events during replay with an empty initial log", async () => {
+    const seen: RuntimeEvent[] = [];
+
+    // Start subscribe without awaiting; it will find no history to replay.
+    const subscribePromise = bus.subscribe(0, (event) => seen.push(event));
+
+    // While subscribe is pending (between attaching listener and finishing), publish events.
+    // These will arrive while subscribe is in flight and should be buffered.
+    await bus.publish({ type: "agent.status", agentId: "a", status: "idle" });
+    await bus.publish({ type: "agent.status", agentId: "a", status: "processing" });
+
+    // Await subscribe to finish; it will drain the buffer.
+    await subscribePromise;
+
+    // Should see both events exactly once, in seq order.
+    expect(seen).toHaveLength(2);
+    expect(seen.map((e) => e.seq)).toEqual([1, 2]);
+  });
+
+  it("interleaves live events during replay with a pre-populated log", async () => {
+    // Pre-populate log with 20 events so replay takes long enough for interleaving to be real.
+    for (let i = 0; i < 20; i++) {
+      await bus.publish({ type: "agent.status", agentId: "a", status: "idle" });
+    }
+
+    const seen: RuntimeEvent[] = [];
+
+    // Start subscribe without awaiting; it will replay all 20 events.
+    const subscribePromise = bus.subscribe(0, (event) => seen.push(event));
+
+    // While subscribe is replaying (between attaching and finishing), publish more events.
+    // These should be buffered and delivered after replay, without duplicates.
+    await bus.publish({ type: "agent.status", agentId: "a", status: "processing" });
+    await bus.publish({ type: "agent.status", agentId: "a", status: "complete" });
+
+    // Await subscribe to finish; it will drain the buffer with dedup.
+    await subscribePromise;
+
+    // Should see all 22 events exactly once, in seq order.
+    expect(seen).toHaveLength(22);
+    expect(seen.map((e) => e.seq)).toEqual(
+      Array.from({ length: 22 }, (_, i) => i + 1)
+    );
+  });
+
+  it("isolates async listeners that reject after an await", async () => {
+    const seen: RuntimeEvent[] = [];
+
+    // Subscribe an async listener that throws after an await.
+    await bus.subscribe(0, async () => {
+      await new Promise((resolve) => setImmediate(resolve));
+      throw new Error("async subscriber threw");
+    });
+
+    // Subscribe another listener to verify it still receives events.
+    await bus.subscribe(0, (event) => seen.push(event));
+
+    // Publish an event. The async listener will reject, but should be caught internally.
+    await bus.publish({ type: "agent.status", agentId: "a", status: "idle" });
+
+    // Give the async rejection time to be handled.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // The non-async listener should have received the event.
+    expect(seen).toHaveLength(1);
+  });
+
+  it("rejects publish when log.append fails and notifies no subscribers", async () => {
+    const seen: RuntimeEvent[] = [];
+    await bus.subscribe(0, (event) => seen.push(event));
+
+    // Mock append to reject.
+    const appendSpy = vi
+      .spyOn(log, "append")
+      .mockRejectedValueOnce(new Error("append failed"));
+
+    try {
+      await bus.publish({ type: "agent.status", agentId: "a", status: "idle" });
+      expect.fail("publish should have thrown");
+    } catch (error) {
+      expect((error as Error).message).toBe("append failed");
+    }
+
+    // The subscriber should not have been notified.
+    expect(seen).toHaveLength(0);
+
+    appendSpy.mockRestore();
   });
 });

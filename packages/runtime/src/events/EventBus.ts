@@ -12,6 +12,7 @@ export type EventListener = (event: RuntimeEvent) => void;
  */
 export class EventBus {
   private readonly listeners = new Set<EventListener>();
+  private readonly pendingBuffers = new Map<EventListener, RuntimeEvent[]>();
 
   constructor(private readonly log: EventLog) {}
 
@@ -23,21 +24,79 @@ export class EventBus {
     return event;
   }
 
-  async subscribe(sinceSeq: number, listener: EventListener): Promise<() => void> {
-    const history = await this.log.replay(sinceSeq);
-    for (const event of history) {
-      this.deliver(listener, event);
-    }
+  async subscribe(
+    sinceSeq: number,
+    listener: EventListener
+  ): Promise<() => void> {
+    const buffer: RuntimeEvent[] = [];
+
+    // Step 1: Attach listener to live set FIRST with a pending buffer.
+    // While replay is in flight, live events will be buffered instead of delivered directly.
     this.listeners.add(listener);
+    this.pendingBuffers.set(listener, buffer);
+
+    try {
+      // Step 2: Await log.replay and deliver replayed events, tracking highest seq.
+      const history = await this.log.replay(sinceSeq);
+      let maxSeq = sinceSeq;
+
+      for (const event of history) {
+        // If unsubscribed during replay, stop immediately.
+        if (!this.listeners.has(listener)) {
+          break;
+        }
+        this.deliverDirect(listener, event);
+        maxSeq = Math.max(maxSeq, event.seq);
+      }
+
+      // Step 3: Drain the buffer, delivering only events whose seq > highest replayed seq.
+      // This dedupes any events that arrived during replay.
+      for (const event of buffer) {
+        if (event.seq > maxSeq) {
+          this.deliverDirect(listener, event);
+          maxSeq = Math.max(maxSeq, event.seq);
+        }
+      }
+    } finally {
+      // Step 4: Switch the subscription to direct live delivery by removing the buffer.
+      this.pendingBuffers.delete(listener);
+    }
+
+    // Step 5: Return unsubscribe function.
     return () => {
       this.listeners.delete(listener);
+      this.pendingBuffers.delete(listener);
     };
   }
 
   private deliver(listener: EventListener, event: RuntimeEvent): void {
+    // If this listener has a pending buffer, add to it instead of calling directly.
+    const buffer = this.pendingBuffers.get(listener);
+    if (buffer) {
+      buffer.push(event);
+      return;
+    }
+
+    this.deliverDirect(listener, event);
+  }
+
+  private deliverDirect(listener: EventListener, event: RuntimeEvent): void {
     // One broken subscriber must not stall the run or starve its peers.
     try {
-      listener(event);
+      const result: unknown = listener(event);
+      // A listener typed `=> void` may still be an async function: TypeScript's
+      // void-return compatibility permits it, and its rejection would otherwise
+      // escape the synchronous catch below as an unhandledRejection.
+      if (
+        typeof result === "object" &&
+        result !== null &&
+        "then" in result &&
+        typeof (result as { then: unknown }).then === "function"
+      ) {
+        void (result as Promise<unknown>).catch((error: unknown) => {
+          console.error("[EventBus] subscriber threw", error);
+        });
+      }
     } catch (error) {
       console.error("[EventBus] subscriber threw", error);
     }
