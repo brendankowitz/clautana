@@ -22,6 +22,11 @@ export class AgentSession {
   private _tokensUsed = 0;
   private _controller?: AbortController;
 
+  // Tracks the in-flight turn so kill() can sequence its own terminal write
+  // after the turn's, rather than racing it. Set when a turn starts, cleared
+  // once sendPrompt() has finished awaiting it.
+  private _turnPromise?: Promise<void>;
+
   constructor(private readonly options: AgentSessionOptions) {}
 
   get status(): AgentStatus {
@@ -41,6 +46,18 @@ export class AgentSession {
       throw new Error(`Agent ${this.options.name} is already processing a prompt`);
     }
 
+    const turn = this.runTurn(text);
+    this._turnPromise = turn;
+    try {
+      await turn;
+    } finally {
+      if (this._turnPromise === turn) {
+        this._turnPromise = undefined;
+      }
+    }
+  }
+
+  private async runTurn(text: string): Promise<void> {
     const controller = new AbortController();
     this._controller = controller;
     await this.setStatus("processing");
@@ -102,7 +119,17 @@ export class AgentSession {
   }
 
   async kill(): Promise<void> {
+    // Abort first so the in-flight turn actually stops producing events,
+    // then wait for its own tail write (interrupted/idle/error) to land
+    // before publishing ours. Racing the two lets the turn's status write
+    // land AFTER "complete", which is incoherent for anything replaying
+    // the durable stream. The turn's own error, if any, is not kill()'s
+    // to surface, so its rejection is swallowed here.
     this._controller?.abort();
+    const turn = this._turnPromise;
+    if (turn) {
+      await turn.catch(() => {});
+    }
     await this.options.backend.dispose();
     await this.setStatus("complete");
   }

@@ -133,4 +133,48 @@ describe("AgentSession", () => {
     expect(disposed).toBe(true);
     expect(session.status).toBe("complete");
   });
+
+  it("kill() sequences after an in-flight multi-event turn, ending at complete", async () => {
+    // Three events so the turn is genuinely mid-flight (not exhausted) when
+    // kill() fires after only the first has been observed.
+    const backend = new FakeBackend([
+      [
+        { kind: "text", content: "first" },
+        { kind: "text", content: "second" },
+        { kind: "text", content: "third" },
+      ],
+    ]);
+    const session = makeSession(backend);
+
+    let resolveFirstOutput: () => void;
+    const firstOutput = new Promise<void>((resolve) => {
+      resolveFirstOutput = resolve;
+    });
+    const unsubscribe = await bus.subscribe(0, (event) => {
+      if (event.type === "agent.output") {
+        resolveFirstOutput();
+      }
+    });
+
+    const running = session.sendPrompt("go");
+    // Wait for genuine mid-flight evidence instead of guessing a microtask
+    // count: the turn must have actually started producing events.
+    await firstOutput;
+
+    await session.kill();
+    await running;
+    unsubscribe();
+
+    expect(session.status).toBe("complete");
+
+    // Proves events actually flowed before the kill — a no-op kill()
+    // implementation would still pass a test that only checked the end state.
+    expect(seen.some((e) => e.type === "agent.output")).toBe(true);
+
+    const statuses = seen
+      .filter((e) => e.type === "agent.status")
+      .map((e) => (e as { status: string }).status);
+    expect(statuses[statuses.length - 1]).toBe("complete");
+    expect(statuses.indexOf("complete")).toBe(statuses.length - 1);
+  });
 });
