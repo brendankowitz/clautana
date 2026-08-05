@@ -40,6 +40,20 @@ describe("ProjectRegistry", () => {
     await rm(other, { recursive: true, force: true });
   });
 
+  it.skipIf(process.platform !== "win32")(
+    "returns the same projectId for differently-cased paths on Windows",
+    async () => {
+      const upper = root.toUpperCase();
+      const lower = root.toLowerCase();
+
+      const a = await registry.open(upper);
+      const b = await registry.open(lower);
+
+      expect(b.projectId).toBe(a.projectId);
+      expect(registry.get(b.projectId)).toBe(a.config);
+    },
+  );
+
   it("resolves an opened project by id", async () => {
     const { projectId } = await registry.open(root);
     expect(registry.get(projectId)).toBeDefined();

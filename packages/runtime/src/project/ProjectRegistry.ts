@@ -24,7 +24,11 @@ export class ProjectRegistry {
     }
 
     // Path-derived so reopening the same folder yields the same id across restarts.
-    const projectId = createHash("sha256").update(root).digest("hex").slice(0, 16);
+    // Windows paths are case-insensitive: C:\Work and c:\work are one directory and
+    // must yield one projectId. POSIX paths are case-SENSITIVE, where /Foo and /foo
+    // are genuinely different directories - lowercasing there would merge them.
+    const idSource = process.platform === "win32" ? root.toLowerCase() : root;
+    const projectId = createHash("sha256").update(idSource).digest("hex").slice(0, 16);
 
     const existing = this.projects.get(projectId);
     if (existing) {
