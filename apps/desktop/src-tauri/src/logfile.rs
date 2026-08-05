@@ -14,6 +14,19 @@
 //! A logging failure must never take down the app or the supervisor: every
 //! fallible operation here degrades to `eprintln!`-only rather than
 //! propagating an error.
+//!
+//! **Secrets exposure:** sidecar stderr is persisted verbatim and
+//! unredacted to a plaintext file under the user's profile, by design —
+//! this module captures diagnostics, it doesn't interpret them (see the
+//! module-level note on `sidecar.rs`'s stderr handling). Today that's inert:
+//! the only backend in play is the fake one used for slice-1 testing. Once
+//! the real `ClaudeBackend` path is wired up, anything the SDK writes to
+//! stderr — which could include prompt content or other sensitive output —
+//! will land durably on disk here too. Filtering it is deliberately out of
+//! scope for this module (that would mean Rust interpreting agent output,
+//! which the design forbids); whoever wires up the real backend should
+//! revisit whether that's an acceptable exposure or needs a redaction layer
+//! upstream of this log.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -135,6 +148,16 @@ impl DiagnosticsLog {
         self.append_to_file(&line);
     }
 
+    // `log()` is called from `Runtime`'s async supervisor task (once per
+    // sidecar stderr/stdout line and per supervision event), and this does
+    // synchronous, blocking file I/O on that same task rather than
+    // `tokio::task::spawn_blocking`. That's a deliberate tradeoff, not an
+    // oversight: at slice-1 chattiness this is a handful of small writes,
+    // and keeping it synchronous keeps the cap/truncate bookkeeping trivial
+    // (no cross-task ordering to reason about). If sidecar stderr volume
+    // ever grows enough for a slow disk to visibly stall event routing,
+    // move this write onto `spawn_blocking` — the escape hatch is here, not
+    // exercised.
     fn append_to_file(&self, line: &str) {
         let mut slot = match self.file.lock() {
             Ok(slot) => slot,
@@ -262,6 +285,43 @@ mod tests {
         );
         // RFC3339 timestamps always contain a 'T' separator between date and time.
         assert!(contents.contains('T'), "line missing timestamp: {contents}");
+    }
+
+    #[test]
+    fn a_poisoned_file_mutex_degrades_silently_instead_of_propagating() {
+        // Regression coverage for the `Err(_) => return` branch in
+        // `append_to_file`: if some other bug panics while holding
+        // `self.file`'s lock, every subsequent `log()` call must keep
+        // working (eprintln!-only) rather than panicking itself.
+        let (path, file) = temp_file("poisoned");
+        let log = DiagnosticsLog::with_file(file);
+
+        log.log(Source::Shell, "before poison");
+
+        // Poison the mutex the way a real bug elsewhere in the process
+        // might: another thread panics while holding the lock.
+        std::thread::scope(|scope| {
+            let handle = scope.spawn(|| {
+                let _guard = log.file.lock().unwrap();
+                panic!("simulated panic while holding the diagnostics log's file lock");
+            });
+            assert!(handle.join().is_err(), "expected the simulated panic to unwind");
+        });
+        assert!(log.file.is_poisoned(), "mutex should be poisoned after a panic while locked");
+
+        // Must not panic, and must skip the file write rather than
+        // propagating the poison error.
+        log.log(Source::Shell, "after poison, must not panic");
+
+        let mut contents = String::new();
+        File::open(&path).unwrap().read_to_string(&mut contents).unwrap();
+        std::fs::remove_file(&path).ok();
+
+        assert!(contents.contains("before poison"));
+        assert!(
+            !contents.contains("after poison"),
+            "write after poisoning should have been skipped, not attempted: {contents}"
+        );
     }
 
     #[test]

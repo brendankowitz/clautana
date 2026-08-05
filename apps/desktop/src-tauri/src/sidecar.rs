@@ -146,7 +146,15 @@ impl Runtime {
                     CommandEvent::Stderr(bytes) => {
                         // Captured verbatim, not parsed — Rust owns no
                         // opinion about what the sidecar's stderr means.
-                        this.log.log(Source::Sidecar, &String::from_utf8_lossy(&bytes));
+                        // `tauri_plugin_shell`'s line reader hands us the
+                        // trailing line terminator (and, on Windows, the
+                        // preceding \r) still attached; strip it so the
+                        // formatted, timestamped record `log()` writes is a
+                        // single line rather than the message plus a blank
+                        // line underneath it.
+                        let line = String::from_utf8_lossy(&bytes);
+                        let trimmed = line.trim_end_matches(['\r', '\n']);
+                        this.log.log(Source::Sidecar, trimmed);
                     }
                     CommandEvent::Terminated(_) => {
                         this.ready.store(false, Ordering::SeqCst);
