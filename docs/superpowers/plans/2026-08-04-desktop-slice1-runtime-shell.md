@@ -3468,6 +3468,32 @@ git commit -m "feat(desktop): add system tray with hide-on-close window lifecycl
 > The functional requirements below are unchanged — styling is additive, not a
 > licence to alter behaviour or the RPC contract.
 
+> **Verify the UI over the DevTools protocol, not with desktop automation.**
+> This machine's desktop is the operator's real one, with personal files on it.
+> WebView2 exposes CDP, so the running app can be driven headlessly:
+>
+> ```bash
+> WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222" ./desktop.exe
+> curl -s http://127.0.0.1:9222/json/list
+> ```
+>
+> Then attach to the page's WebSocket and use `Runtime.evaluate` to read
+> `document.body.innerText` for real rendered state, `Log.entryAdded` and
+> `Runtime.consoleAPICalled` for console output, and synthesized clicks to drive
+> the flow. Node 22+ has a global `WebSocket`, so this needs no dependency — a
+> ~40-line script is enough.
+>
+> This reads what actually rendered rather than what a screenshot appears to show,
+> and it touches nothing outside the app. Prefer it over computer-use for every
+> UI check in this task.
+>
+> **Consume all three channels the shell emits**, not just the one the original
+> plan named: `runtime-event` (the JSON-RPC event stream), `runtime-ready`
+> (readiness gate — the sidecar's `{"method":"runtime.ready"}` is deliberately
+> *not* forwarded as an event), and `runtime-status` (supervision state, including
+> `fatal: restart failed: …`). Surfacing `runtime-status` is what gives a user any
+> signal when the sidecar dies permanently.
+
 **Interfaces:**
 - Consumes: Tauri command `rpc_call`; Tauri event `runtime-event`; `RuntimeEvent`, `isRuntimeEvent` from `@clautana/protocol`.
 - Produces: `class RpcClient` with `constructor(invoke: (cmd: string, args: Record<string, unknown>) => Promise<string>)`, `async call<T>(method: string, params: unknown): Promise<T>` (throws on an error response), `handleNotification(line: string): RuntimeEvent | undefined`.
@@ -3850,7 +3876,34 @@ Install and run the MSI. Confirm every step:
 4. Sending a prompt streams `[processing]`, then text output, then `[idle]`.
 5. Closing the window hides to tray; reopening from the tray shows the full prior output with no gaps and no duplicates.
 6. "Interrupt" during a run yields `[interrupted]`.
-7. Tray → Quit exits. Task Manager shows no `clautana-runtime.exe` and no stray `node.exe` from the SDK.
+7. Tray → Quit exits. No `clautana-runtime.exe` and no stray `node.exe` from the SDK remain.
+
+Use process forensics rather than eyeballing Task Manager — parentage is the part
+that actually proves the tree came up correctly, and absence is easier to assert
+in a script than to read off a list:
+
+```powershell
+Get-CimInstance Win32_Process |
+  Where-Object { $_.Name -match 'desktop|clautana-runtime|claude|node' } |
+  Select-Object ProcessId, ParentProcessId, Name, CommandLine | Format-Table -Auto
+```
+
+While the app is running this should show `desktop.exe` → `clautana-runtime.exe`,
+and — once an agent is actually running — the SDK's `claude` executable beneath the
+sidecar. That parentage is what distinguishes "the sidecar spawned and is hosting
+the agent" from "the sidecar spawned but the agent never started", which are
+indistinguishable from output alone. After Quit, the same command must return
+nothing.
+
+8. Force-quit the app (`Stop-Process -Force`) rather than using Quit, and re-run
+   the same query. It must also return nothing — that is the Job Object guarantee,
+   and it is the one that matters when the app crashes rather than exits.
+
+9. **Check the diagnostics log** (Task 18). Force a sidecar failure — e.g. point
+   `CLAUTANA_CLAUDE_EXECUTABLE` at a nonexistent path, or corrupt the sidecar
+   binary — and confirm the reason appears in the log file under the app-data
+   directory. If the app cannot explain its own failure here, Task 18 did not
+   land, regardless of what its unit tests say.
 
 Record any failures and fix before continuing.
 
