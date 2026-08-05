@@ -56,15 +56,26 @@ export class AgentPool {
       backend,
       bus: this.options.bus,
     });
+
+    // Publish before registering: the event stream is the source of truth, so
+    // a durable "agent.spawned" with no registered session is a strictly
+    // better failure than a registered session nobody can reach through
+    // get() or the kill RPC. If the publish itself fails, dispose the
+    // backend so a real subprocess is never orphaned, and leave the pool
+    // untouched.
+    try {
+      await this.options.bus.publish({
+        type: "agent.spawned",
+        agentId,
+        name: profile.name,
+        profile: params.profile,
+      });
+    } catch (error) {
+      await backend.dispose().catch(() => {});
+      throw error;
+    }
+
     this.sessions.set(agentId, session);
-
-    await this.options.bus.publish({
-      type: "agent.spawned",
-      agentId,
-      name: profile.name,
-      profile: params.profile,
-    });
-
     return agentId;
   }
 
