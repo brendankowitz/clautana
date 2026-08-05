@@ -16,11 +16,22 @@ pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     let menu = Menu::with_items(app, &[&show, &quit])?;
 
     TrayIconBuilder::new()
-        .icon(app.default_window_icon().unwrap().clone())
+        .icon(
+            app.default_window_icon()
+                .expect("bundled window icon missing — check tauri.conf.json bundle.icon")
+                .clone(),
+        )
+        .tooltip("Clautana")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => {
                 if let Some(window) = app.get_webview_window("main") {
+                    // Minimize/unminimize and show/hide are independent window
+                    // states in Tauri. If the window was minimized before it
+                    // was closed (hidden), `show()` alone redisplays it in its
+                    // last show-state — still iconic, so it never visibly
+                    // reappears. Clear the minimized flag first.
+                    let _ = window.unminimize();
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
