@@ -52,8 +52,11 @@ function agentStatusClass(status: AgentStatus | undefined): string {
 export default function App() {
   const [projectId, setProjectId] = useState<string>();
   const [agentId, setAgentId] = useState<string>();
-  const [agentName, setAgentName] = useState<string>();
-  const [agentStatus, setAgentStatus] = useState<AgentStatus>();
+  // Keyed by agentId rather than gated on "is this the currently selected
+  // agent" at event-arrival time — see the mount effect's comment on why
+  // that comparison is unsafe.
+  const [agentNames, setAgentNames] = useState<Record<string, string>>({});
+  const [agentStatuses, setAgentStatuses] = useState<Record<string, AgentStatus>>({});
   const [events, setEvents] = useState<RuntimeEvent[]>([]);
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState<UiError>();
@@ -71,13 +74,54 @@ export default function App() {
   const [fatalMessage, setFatalMessage] = useState<string>();
 
   const lastSeq = useRef(0);
-  const agentIdRef = useRef<string | undefined>(undefined);
-  agentIdRef.current = agentId;
+
+  // Idempotency guard for `markReady`: both the `runtime-ready` listener and
+  // the `runtime.ping` bootstrap probe (see below) can resolve for the same
+  // readiness cycle, in either order depending on which one wins the race.
+  // Without this ref, both would call `setReadyGeneration`, and each bump
+  // independently re-fires the events.subscribe effect — two concurrent
+  // subscriptions racing to overwrite the sidecar's single `unsubscribe`
+  // handle, permanently leaking one `EventBus` listener and double-publishing
+  // every later event. A plain boolean *state* wouldn't close this: two
+  // `markReady` calls landing in the same tick (or before a re-render lands)
+  // would both still read the pre-update value. A ref is checked and set
+  // synchronously, so only the first of the two ever proceeds.
+  const readySignaledRef = useRef(false);
+
+  // Set when a `runtime-status: "restarting"` is observed, cleared the next
+  // time `markReady` actually transitions. Drives the reset below.
+  const restartPendingRef = useRef(false);
 
   const isReady = readyGeneration > 0 && !fatalMessage;
 
   useEffect(() => {
     const markReady = () => {
+      if (readySignaledRef.current) {
+        // Already transitioned for this readiness cycle via the other path
+        // (event vs. ping) — nothing left to do.
+        return;
+      }
+      readySignaledRef.current = true;
+
+      if (restartPendingRef.current) {
+        // A genuine restart, not the initial bootstrap: the new sidecar
+        // process has a fresh `runId` and an empty event log (see
+        // packages/runtime/src/main.ts), so its seq numbers start over from
+        // zero. Without resetting, every post-restart event with
+        // seq <= the pre-crash high-water mark would be silently dropped by
+        // the seq-dedupe guard below, and once the new counter climbed back
+        // past that mark, the new run's events would append directly onto
+        // the old run's tail with no boundary — two unrelated runs
+        // conflated into one list. Clearing is simpler than inserting a
+        // boundary marker and defensible for slice 1: there is no partial
+        // run to preserve, since nothing from the dead run's tail end
+        // (which never got a chance to flush past the crash) is still valid
+        // to display in-line with the new run anyway.
+        restartPendingRef.current = false;
+        lastSeq.current = 0;
+        setEvents([]);
+      }
+
       setRestarting(false);
       setReadyGeneration((generation) => generation + 1);
     };
@@ -95,12 +139,12 @@ export default function App() {
     // gate before writing anything (see `Runtime::call`/`wait_ready`), so a
     // harmless `runtime.ping` probed once at mount reaches the same
     // conclusion without depending on event delivery timing: it resolves the
-    // instant the sidecar is ready (bounded by Rust's own 10s timeout) and
-    // is a no-op past that point once `runtime-ready` events take over for
-    // any later restart. This was found, not assumed: verified by observing
-    // a real launch where the sidecar was alive and idle (near-zero CPU,
-    // blocked on stdin as designed) while the UI stayed on "Starting…" with
-    // no console errors.
+    // instant the sidecar is ready (bounded by Rust's own 10s timeout). This
+    // was found, not assumed: verified by observing a real launch where the
+    // sidecar was alive and idle (near-zero CPU, blocked on stdin as
+    // designed) while the UI stayed on "Starting…" with no console errors.
+    // `markReady`'s idempotency guard (above) is what makes running both
+    // this probe and the event listener safe regardless of which wins.
     rpc
       .call("runtime.ping", {})
       .then(markReady)
@@ -111,6 +155,10 @@ export default function App() {
       if (status.startsWith("fatal:")) {
         setFatalMessage(status);
       } else if (status === "restarting") {
+        restartPendingRef.current = true;
+        // Allow the next readiness signal to transition again — this cycle's
+        // transition already happened for the run that's now restarting.
+        readySignaledRef.current = false;
         setRestarting(true);
       }
     });
@@ -123,11 +171,22 @@ export default function App() {
       lastSeq.current = event.seq;
       setEvents((current) => [...current, event]);
 
-      if (event.type === "agent.spawned" && event.agentId === agentIdRef.current) {
-        setAgentName(event.name);
+      // Recorded by the event's own agentId, not gated on "is this the
+      // currently selected agent" — `agent.spawn`'s RPC response only
+      // resolves *after* `AgentPool.spawn` publishes `agent.spawned` (see
+      // packages/runtime/src/agent/AgentPool.ts), and Rust's single-threaded
+      // stdout reader forwards that event before the response line that
+      // would let `setAgentId` run. So the event for a freshly spawned agent
+      // always arrives before this component's `agentId` state (or a ref
+      // mirroring it) has updated to match — comparing against "current"
+      // agentId here would never see its own spawn. Keying by the event's
+      // own id sidesteps the ordering dependency entirely; the lookup at
+      // render time uses whichever `agentId` is selected then.
+      if (event.type === "agent.spawned") {
+        setAgentNames((current) => ({ ...current, [event.agentId]: event.name }));
       }
-      if (event.type === "agent.status" && event.agentId === agentIdRef.current) {
-        setAgentStatus(event.status);
+      if (event.type === "agent.status") {
+        setAgentStatuses((current) => ({ ...current, [event.agentId]: event.status }));
       }
     });
 
@@ -172,8 +231,6 @@ export default function App() {
         profile: "default",
       });
       setAgentId(result.agentId);
-      setAgentName(undefined);
-      setAgentStatus(undefined);
       setError(undefined);
     } catch (e) {
       setError(describeError(e));
@@ -200,6 +257,9 @@ export default function App() {
       setError(describeError(e));
     }
   }, [agentId]);
+
+  const agentName = agentId ? agentNames[agentId] : undefined;
+  const agentStatus = agentId ? agentStatuses[agentId] : undefined;
 
   const runtimeStatusLabel = fatalMessage
     ? "Runtime unavailable"
