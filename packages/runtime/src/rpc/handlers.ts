@@ -1,6 +1,7 @@
 import { PROTOCOL_VERSION } from "@clautana/protocol";
 import type { AgentPool } from "../agent/AgentPool.js";
 import type { ProjectRegistry } from "../project/ProjectRegistry.js";
+import { InvalidParamsError } from "./errors.js";
 import type { RpcHandler } from "./JsonRpcServer.js";
 
 export interface HandlerDeps {
@@ -14,7 +15,7 @@ export interface HandlerDeps {
 function requireString(params: unknown, key: string): string {
   const value = (params as Record<string, unknown> | undefined)?.[key];
   if (typeof value !== "string" || value === "") {
-    throw new Error(`Missing required string parameter "${key}"`);
+    throw new InvalidParamsError(`Missing required string parameter "${key}"`);
   }
   return value;
 }

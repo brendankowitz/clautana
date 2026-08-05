@@ -3,8 +3,10 @@ import type { Readable, Writable } from "node:stream";
 import type { RuntimeEvent } from "@clautana/protocol";
 import {
   RPC_ERROR_INTERNAL,
+  RPC_ERROR_INVALID_PARAMS,
   RPC_ERROR_METHOD_NOT_FOUND,
 } from "@clautana/protocol";
+import { InvalidParamsError } from "./errors.js";
 
 export type RpcHandler = (params: unknown) => Promise<unknown>;
 
@@ -61,7 +63,8 @@ export class JsonRpcServer {
       return JSON.stringify({ id, result });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return JsonRpcServer.errorResponse(id, RPC_ERROR_INTERNAL, message);
+      const code = error instanceof InvalidParamsError ? RPC_ERROR_INVALID_PARAMS : RPC_ERROR_INTERNAL;
+      return JsonRpcServer.errorResponse(id, code, message);
     }
   }
 

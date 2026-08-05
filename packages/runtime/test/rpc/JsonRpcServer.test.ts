@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   RPC_ERROR_METHOD_NOT_FOUND,
   RPC_ERROR_INTERNAL,
+  RPC_ERROR_INVALID_PARAMS,
 } from "@clautana/protocol";
 import { JsonRpcServer } from "../../src/rpc/JsonRpcServer.js";
+import { InvalidParamsError } from "../../src/rpc/errors.js";
 
 function server(): JsonRpcServer {
   return new JsonRpcServer({
@@ -11,6 +13,9 @@ function server(): JsonRpcServer {
     "test.echo": async (params) => params,
     "test.boom": async () => {
       throw new Error("handler failed");
+    },
+    "test.badParams": async () => {
+      throw new InvalidParamsError('Missing required string parameter "agentId"');
     },
   });
 }
@@ -46,6 +51,23 @@ describe("JsonRpcServer", () => {
     const parsed = JSON.parse(out!);
     expect(parsed.error.code).toBe(RPC_ERROR_INTERNAL);
     expect(parsed.error.message).toContain("handler failed");
+  });
+
+  it("returns invalid-params for a handler that rejects with InvalidParamsError", async () => {
+    const out = await server().handleLine(
+      JSON.stringify({ id: 5, method: "test.badParams", params: {} }),
+    );
+    const parsed = JSON.parse(out!);
+    expect(parsed.error.code).toBe(RPC_ERROR_INVALID_PARAMS);
+    expect(parsed.error.message).toContain("agentId");
+  });
+
+  it("still returns internal error for a handler throwing a generic Error", async () => {
+    const out = await server().handleLine(
+      JSON.stringify({ id: 6, method: "test.boom", params: {} }),
+    );
+    const parsed = JSON.parse(out!);
+    expect(parsed.error.code).toBe(RPC_ERROR_INTERNAL);
   });
 
   it("ignores blank lines", async () => {
