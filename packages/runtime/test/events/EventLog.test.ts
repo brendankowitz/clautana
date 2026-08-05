@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, readFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { EventDraft } from "../../src/events/EventLog.js";
 import { EventLog } from "../../src/events/EventLog.js";
+
+// Helper to type event drafts (fixes TypeScript union discrimination)
+const evt = (draft: unknown): EventDraft => draft as EventDraft;
 
 let dir: string;
 
@@ -17,8 +21,8 @@ afterEach(async () => {
 describe("EventLog", () => {
   it("assigns monotonically increasing seq starting at 1", async () => {
     const log = await EventLog.open(dir, "run-1");
-    const first = await log.append({ type: "agent.status", agentId: "a", status: "idle" });
-    const second = await log.append({ type: "agent.status", agentId: "a", status: "processing" });
+    const first = await log.append(evt({ type: "agent.status", agentId: "a", status: "idle" }));
+    const second = await log.append(evt({ type: "agent.status", agentId: "a", status: "processing" }));
     expect(first.seq).toBe(1);
     expect(second.seq).toBe(2);
     expect(log.lastSeq).toBe(2);
@@ -27,7 +31,7 @@ describe("EventLog", () => {
 
   it("stamps runId and an ISO timestamp", async () => {
     const log = await EventLog.open(dir, "run-1");
-    const event = await log.append({ type: "agent.status", agentId: "a", status: "idle" });
+    const event = await log.append(evt({ type: "agent.status", agentId: "a", status: "idle" }));
     expect(event.runId).toBe("run-1");
     expect(event.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/);
     await log.close();
@@ -35,8 +39,8 @@ describe("EventLog", () => {
 
   it("persists one JSON object per line", async () => {
     const log = await EventLog.open(dir, "run-1");
-    await log.append({ type: "agent.status", agentId: "a", status: "idle" });
-    await log.append({ type: "agent.status", agentId: "a", status: "processing" });
+    await log.append(evt({ type: "agent.status", agentId: "a", status: "idle" }));
+    await log.append(evt({ type: "agent.status", agentId: "a", status: "processing" }));
     await log.close();
 
     const raw = await readFile(join(dir, "run-1", "events.jsonl"), "utf8");
@@ -48,9 +52,9 @@ describe("EventLog", () => {
 
   it("replays only events after sinceSeq", async () => {
     const log = await EventLog.open(dir, "run-1");
-    await log.append({ type: "agent.status", agentId: "a", status: "idle" });
-    await log.append({ type: "agent.status", agentId: "a", status: "processing" });
-    await log.append({ type: "agent.status", agentId: "a", status: "complete" });
+    await log.append(evt({ type: "agent.status", agentId: "a", status: "idle" }));
+    await log.append(evt({ type: "agent.status", agentId: "a", status: "processing" }));
+    await log.append(evt({ type: "agent.status", agentId: "a", status: "complete" }));
 
     const replayed = await log.replay(1);
     expect(replayed.map((e) => e.seq)).toEqual([2, 3]);
@@ -59,20 +63,20 @@ describe("EventLog", () => {
 
   it("resumes seq from an existing log on reopen", async () => {
     const first = await EventLog.open(dir, "run-1");
-    await first.append({ type: "agent.status", agentId: "a", status: "idle" });
-    await first.append({ type: "agent.status", agentId: "a", status: "processing" });
+    await first.append(evt({ type: "agent.status", agentId: "a", status: "idle" }));
+    await first.append(evt({ type: "agent.status", agentId: "a", status: "processing" }));
     await first.close();
 
     const reopened = await EventLog.open(dir, "run-1");
     expect(reopened.lastSeq).toBe(2);
-    const next = await reopened.append({ type: "agent.status", agentId: "a", status: "complete" });
+    const next = await reopened.append(evt({ type: "agent.status", agentId: "a", status: "complete" }));
     expect(next.seq).toBe(3);
     await reopened.close();
   });
 
   it("skips corrupt trailing lines when resuming", async () => {
     const log = await EventLog.open(dir, "run-1");
-    await log.append({ type: "agent.status", agentId: "a", status: "idle" });
+    await log.append(evt({ type: "agent.status", agentId: "a", status: "idle" }));
     await log.close();
 
     const { appendFile } = await import("node:fs/promises");
@@ -88,7 +92,7 @@ describe("EventLog", () => {
 
     // Fire 20 concurrent appends without awaiting individually
     const promises = Array.from({ length: 20 }, (_, i) =>
-      log.append({ type: "agent.status", agentId: `a${i}`, status: "idle" }),
+      log.append(evt({ type: "agent.status", agentId: `a${i}`, status: "idle" })),
     );
     const results = await Promise.all(promises);
 
@@ -112,7 +116,7 @@ describe("EventLog", () => {
     const log = await EventLog.open(dir, "run-1");
     const filePath = join(dir, "run-1", "events.jsonl");
 
-    const first = await log.append({ type: "agent.status", agentId: "a", status: "idle" });
+    const first = await log.append(evt({ type: "agent.status", agentId: "a", status: "idle" }));
     expect(first.seq).toBe(1);
 
     // Make the write target un-writable as a file: put a directory in its place.
@@ -120,14 +124,14 @@ describe("EventLog", () => {
     await mkdir(filePath);
 
     await expect(
-      log.append({ type: "agent.status", agentId: "a", status: "processing" }),
+      log.append(evt({ type: "agent.status", agentId: "a", status: "processing" })),
     ).rejects.toThrow();
 
     // Restore a writable path.
     await rm(filePath, { recursive: true, force: true });
 
     // The queue must NOT be poisoned: this append has to actually reach disk.
-    const third = await log.append({ type: "agent.status", agentId: "a", status: "complete" });
+    const third = await log.append(evt({ type: "agent.status", agentId: "a", status: "complete" }));
 
     // Seq gap is the ruled behaviour: 2 was consumed by the failed write and is
     // never reused.
@@ -144,7 +148,7 @@ describe("EventLog", () => {
 
   it("stops reading at corrupt-shape JSON that is not a valid runtime event", async () => {
     const log = await EventLog.open(dir, "run-1");
-    await log.append({ type: "agent.status", agentId: "a", status: "idle" });
+    await log.append(evt({ type: "agent.status", agentId: "a", status: "idle" }));
     await log.close();
 
     const { appendFile } = await import("node:fs/promises");
