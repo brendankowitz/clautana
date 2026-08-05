@@ -12,7 +12,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let runtime = sidecar::Runtime::spawn(&app.handle())?;
+            let runtime = sidecar::Runtime::spawn(app.handle())?;
             app.manage(Arc::clone(&runtime));
             tray::setup(app)?;
             Ok(())
