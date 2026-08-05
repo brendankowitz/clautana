@@ -28,6 +28,9 @@ export class EventBus {
     sinceSeq: number,
     listener: EventListener
   ): Promise<() => void> {
+    // The unsubscribe handle below is only returned once replay and buffer
+    // drain complete, so a caller has no way to cancel a subscription while
+    // this method is still pending.
     const buffer: RuntimeEvent[] = [];
 
     // Step 1: Attach listener to live set FIRST with a pending buffer.

@@ -148,7 +148,7 @@ describe("EventBus", () => {
   it("interleaves live events deterministically: empty log", async () => {
     // Use a stub with controllable replay timing.
     const stub = new StubEventLog();
-    const testBus = new EventBus(stub as any);
+    const testBus = new EventBus(stub as unknown as EventLog);
 
     const seen: RuntimeEvent[] = [];
 
@@ -174,7 +174,7 @@ describe("EventBus", () => {
   it("interleaves live events deterministically: pre-populated log with seq gap", async () => {
     // Use a stub with controllable replay timing.
     const stub = new StubEventLog();
-    const testBus = new EventBus(stub as any);
+    const testBus = new EventBus(stub as unknown as EventLog);
 
     // Pre-populate with some events (simulating a seq gap: 1,2,3,5).
     // We'll manually construct these since stub.append increments seq.
@@ -251,7 +251,7 @@ describe("EventBus", () => {
 
   it("rejects subscribe when log.replay fails and does not register listener", async () => {
     const stub = new StubEventLog();
-    const testBus = new EventBus(stub as any);
+    const testBus = new EventBus(stub as unknown as EventLog);
 
     const seen: RuntimeEvent[] = [];
     const listener = (event: RuntimeEvent) => seen.push(event);
