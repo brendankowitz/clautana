@@ -6,7 +6,6 @@ export interface AgentBackendConfig {
   systemPrompt?: string;
   allowedTools?: string[];
   mcpServers?: Record<string, unknown>;
-  pathToClaudeCodeExecutable?: string;
 }
 
 export type BackendEvent =
