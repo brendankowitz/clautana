@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Stats } from "node:fs";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { ConfigManager } from "./ConfigManager.js";
@@ -8,6 +9,24 @@ export interface OpenedProject {
   config: ConfigManager;
 }
 
+/**
+ * Maps a failed `stat()` on a project path to the error `open()` should throw.
+ * Only `ENOENT` means "does not exist" - permission failures (`EACCES`/`EPERM`,
+ * e.g. another user's profile folder or a network share with dropped
+ * credentials) and anything else must surface as themselves rather than being
+ * flattened into a misleading "does not exist".
+ */
+export function describeStatError(error: unknown, path: string): Error {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  if (code === "ENOENT") {
+    return new Error(`Project path does not exist: ${path}`);
+  }
+  if (code === "EACCES" || code === "EPERM") {
+    return new Error(`Cannot access project path (permission denied): ${path}`);
+  }
+  return error instanceof Error ? error : new Error(String(error));
+}
+
 /** Tracks the projects the runtime currently has open. */
 export class ProjectRegistry {
   private readonly projects = new Map<string, ConfigManager>();
@@ -15,9 +34,11 @@ export class ProjectRegistry {
   async open(path: string): Promise<OpenedProject> {
     const root = resolve(path);
 
-    const info = await stat(root).catch(() => undefined);
-    if (!info) {
-      throw new Error(`Project path does not exist: ${root}`);
+    let info: Stats;
+    try {
+      info = await stat(root);
+    } catch (error) {
+      throw describeStatError(error, root);
     }
     if (!info.isDirectory()) {
       throw new Error(`Project path is not a directory: ${root}`);

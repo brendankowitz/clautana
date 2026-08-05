@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile, mkdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProjectRegistry } from "../../src/project/ProjectRegistry.js";
+import { ProjectRegistry, describeStatError } from "../../src/project/ProjectRegistry.js";
 
 let root: string;
 let registry: ProjectRegistry;
@@ -69,6 +69,11 @@ describe("ProjectRegistry", () => {
     await expect(registry.open(file)).rejects.toThrow(/not a directory/i);
   });
 
+  it("rejects a path that does not exist", async () => {
+    const missing = join(root, "does-not-exist");
+    await expect(registry.open(missing)).rejects.toThrow(/does not exist/i);
+  });
+
   it("loads agent profiles from .clautana/agents", async () => {
     const agentsDir = join(root, ".clautana", "agents");
     await mkdir(agentsDir, { recursive: true });
@@ -100,5 +105,37 @@ describe("ProjectRegistry", () => {
 
     expect(profiles.has("broken")).toBe(false);
     expect(profiles.has("default")).toBe(true);
+  });
+});
+
+describe("describeStatError", () => {
+  function errnoException(code: string): NodeJS.ErrnoException {
+    const error = new Error(`synthetic ${code}`) as NodeJS.ErrnoException;
+    error.code = code;
+    return error;
+  }
+
+  it("maps ENOENT to a does-not-exist message", () => {
+    const error = describeStatError(errnoException("ENOENT"), "/some/path");
+    expect(error.message).toMatch(/does not exist/i);
+  });
+
+  it("maps EACCES to a distinct permission-denied message, not does-not-exist", () => {
+    const error = describeStatError(errnoException("EACCES"), "/some/path");
+    expect(error.message).toMatch(/permission denied/i);
+    expect(error.message).not.toMatch(/does not exist/i);
+  });
+
+  it("maps EPERM to a distinct permission-denied message, not does-not-exist", () => {
+    const error = describeStatError(errnoException("EPERM"), "/some/path");
+    expect(error.message).toMatch(/permission denied/i);
+    expect(error.message).not.toMatch(/does not exist/i);
+  });
+
+  it("rethrows any other error as-is rather than flattening it", () => {
+    const original = errnoException("EIO");
+    const error = describeStatError(original, "/some/path");
+    expect(error).toBe(original);
+    expect(error.message).not.toMatch(/does not exist/i);
   });
 });
