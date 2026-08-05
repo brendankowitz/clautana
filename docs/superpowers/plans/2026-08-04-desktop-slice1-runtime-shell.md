@@ -4030,3 +4030,43 @@ Plus `typecheck`, `typecheck:test`, `build`, and the `any` grep.
 git add packages/runtime
 git commit -m "feat(runtime): make model and effort configurable per agent profile"
 ```
+
+---
+
+## Task 18: Durable sidecar diagnostics
+
+> **Added during execution**, from a debugging pattern the human partner shared:
+> *"the supervisor logged 'worker stderr emitted' and threw the content away, and
+> the worker deliberately redacts errors to a constructor name. So the app could
+> only ever tell me `Error`."* We have the same bug in a different shape.
+
+**The gap:** `main.rs:2` sets `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`,
+so a release build has **no console**. `sidecar.rs:124` captures the sidecar's
+stderr and `eprintln!`s it — into a handle that goes nowhere. The diagnostic is
+captured and then discarded. In a shipped app, an agent failure is unexplainable.
+
+This matters most in Task 16: when the smoke test fails on an installed MSI,
+there is currently nothing to read.
+
+**Files:**
+- Modify: `apps/desktop/src-tauri/src/sidecar.rs`
+- Create: a small log-writing module (e.g. `src-tauri/src/logfile.rs`)
+
+**Requirements:**
+- Sidecar stderr, plus the shell's own supervision events (spawn, restart with
+  attempt number, assign failure, shutdown path taken, fatal restart), append to a
+  file under the Tauri **app-data** directory — resolve it via Tauri's path API,
+  do not hard-code `%APPDATA%`.
+- Keep `eprintln!` as well, so `cargo run` still shows it inline.
+- Timestamp each line and tag its source (`[sidecar]` vs `[shell]`) — an
+  undifferentiated blob is barely better than nothing.
+- **Cap the file.** An agent looping on an error could otherwise fill the disk.
+  Simplest sufficient approach: truncate at startup and stop appending past a size
+  ceiling, logging once that the cap was hit. Do not build rotation.
+- A failure to open or write the log must **never** take down the app or the
+  supervisor. Degrade to `eprintln!` only.
+- Print the resolved log path once at startup so a user can be told where to look.
+
+**Testing:** the path-resolution and cap logic should be pure enough to unit-test
+without a running Tauri app. The end-to-end check belongs in Task 16: force a
+sidecar failure and confirm the reason appears in the log file.
