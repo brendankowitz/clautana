@@ -18,13 +18,19 @@ import { fileURLToPath } from "node:url";
 // generated .wxs). The packaged SEA binary resolves its dynamic
 // `import("@anthropic-ai/claude-agent-sdk")` by walking up from
 // `process.cwd()` looking for a `node_modules` directory (Task 12), not
-// from its own directory. The installed app's shortcuts (Desktop and Start
-// Menu, both WiX-generated) set `WorkingDirectory="INSTALLDIR"`, so the
-// sidecar - spawned by Rust without an explicit working directory override,
-// and therefore inheriting the shell's actual process cwd - starts with
-// cwd = INSTALLDIR = the same directory this node_modules tree lands in.
-// That is what makes staging the SDK here sufficient: it is not "next to"
-// the exe in name only, it is resolvable from the exe's own runtime cwd.
+// from its own directory. `apps/desktop/src-tauri/src/sidecar.rs` spawns the
+// sidecar with `current_dir(resource_dir())` explicitly - it does NOT rely on
+// the installed shortcuts' `WorkingDirectory="INSTALLDIR"` (that only covers
+// launches that go through a WiX-generated shortcut; a Win+R launch by full
+// path, a hand-made shortcut, or a copied exe would inherit some other cwd
+// instead). Setting `current_dir` in Rust is what makes staging the SDK here
+// sufficient regardless of how the app was launched: cwd = resource_dir() =
+// the same directory this node_modules tree lands in.
+//
+// Because that pins the sidecar's cwd to the (often per-machine, read-only)
+// install directory, its event log directory is passed separately via the
+// `CLAUTANA_RUNS_DIR` environment variable (also set in sidecar.rs, pointed
+// at Tauri's app-data directory) rather than left to default from cwd.
 const here = dirname(fileURLToPath(import.meta.url));
 const srcTauriRoot = resolve(here, "..");
 const repoRoot = resolve(srcTauriRoot, "../../..");

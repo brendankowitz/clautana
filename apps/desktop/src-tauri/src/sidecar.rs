@@ -109,10 +109,29 @@ impl Runtime {
             // `current_dir` here removes the dependency on how the app was
             // launched entirely.
             let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
+
+            // The sidecar defaults its event-log directory to
+            // `<cwd>/.clautana/runs` when `CLAUTANA_RUNS_DIR` is unset
+            // (packages/runtime/src/main.ts). Now that cwd is pinned to
+            // `resource_dir()` above - which on an installed, per-machine
+            // MSI is under `C:\Program Files\`, not writable by an
+            // unelevated process - that default makes `EventLog.open()`
+            // throw `EPERM` on first launch, `main()` exit 1, and this
+            // supervisor restart forever on backoff with the UI stuck on
+            // "Restarting...". Pass an explicit, always-writable location
+            // instead: Tauri's per-user app-data directory (the same family
+            // `logfile::DiagnosticsLog` uses), with the runs directory as a
+            // sibling of the diagnostics log rather than nested under it.
+            // `EventLog.open`'s own `mkdir(..., { recursive: true })` covers
+            // creating it - nothing here needs to pre-create the directory.
+            let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+            let runs_dir = app_data_dir.join("runs");
+
             app.shell()
                 .sidecar("clautana-runtime")
                 .map_err(|e| e.to_string())?
                 .current_dir(resource_dir)
+                .env("CLAUTANA_RUNS_DIR", runs_dir)
                 .spawn()
                 .map_err(|e| e.to_string())
         })();
