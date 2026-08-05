@@ -3953,3 +3953,81 @@ Slice 1 is done when all of these hold:
 - [ ] An MSI builds and installs.
 - [ ] The manual smoke path in Task 16 Step 3 passes in full, including no orphaned processes after quit.
 - [ ] `src/multi-agent-harness/` no longer exists and nothing references it.
+
+---
+
+## Task 17: Per-profile model and effort configuration
+
+> **Added during execution.** Executes after Task 12, before Task 13. Numbered 17
+> to avoid renumbering tasks already complete.
+>
+> **Why:** an audit found no model ID anywhere in the codebase — every agent
+> silently inherits the Claude CLI's default model at its default effort. The
+> Agent SDK's `Options` exposes `model`, `effort`, and `thinking`; we set none of
+> them. For a product whose whole purpose is running *differentiated* agents
+> (a cheap triage agent and a hard-refactor agent are not the same job), that is
+> a functional gap, not a stylistic one.
+>
+> Doing it now rather than in slice 2 because `AgentProfile` is **written to disk**
+> in `<project>/.clautana/agents/*.json`. Adding fields after users have profile
+> files means a migration; adding them now costs nothing.
+
+**Files:**
+- Modify: `packages/runtime/src/project/AgentProfiles.ts`, `packages/runtime/src/backend/AgentBackend.ts`, `packages/runtime/src/backend/ClaudeBackend.ts`, `packages/runtime/src/agent/AgentPool.ts`
+- Test: the existing test files for each
+
+**Interfaces:**
+- Consumes: `EffortLevel` from `@anthropic-ai/claude-agent-sdk` (exported: `'low' | 'medium' | 'high' | 'xhigh' | 'max'`).
+- Produces: `AgentProfile` and `AgentBackendConfig` each gain `model?: string` and `effort?: EffortLevel`; `ClaudeBackend` forwards both to `query()` options.
+
+**Verified SDK facts** (checked against the installed `sdk.d.ts` — do not re-derive):
+- `Options.model?: string` — *"Claude model to use. Defaults to the CLI default model."*
+- `Options.effort?: EffortLevel`, and `EffortLevel` is exported at `sdk.d.ts:553`.
+- `Options.thinking?: ThinkingConfig` also exists but is **out of scope** for this task.
+
+**Design decisions (already made — implement as stated):**
+- Both fields are **optional**. Omitted → the SDK/CLI default applies, exactly as today. Existing profile files on disk stay valid with no migration.
+- `DEFAULT_PROFILE` gets an explicit `effort: "high"` — the documented API default, made explicit rather than inherited. It deliberately does **not** set `model`: hard-coding a model ID into the default would date the product and override the user's CLI configuration.
+- `xhigh` is the documented best setting for coding and agentic work (and Claude Code's own default). Do not make it the default here — it is the setting a *coding* profile should opt into, and the default profile is general-purpose.
+- Do NOT add `thinking`. Its correct value is model-dependent, and no slice-1 requirement needs it.
+
+- [ ] **Step 1: Write the failing tests**
+
+Extend the existing suites rather than adding new files:
+- `test/project/ProjectRegistry.test.ts` — a profile JSON carrying `model` and `effort` round-trips through `loadProfiles()`; a profile with an **invalid** `effort` value (e.g. `"turbo"`) has that field dropped rather than failing the whole profile; `DEFAULT_PROFILE` exposes `effort: "high"`.
+- `test/agent/AgentPool.test.ts` — a profile's `model` and `effort` reach the `backendFactory`'s `AgentBackendConfig`.
+
+- [ ] **Step 2: Run them and confirm they fail**
+
+```bash
+npm -w @clautana/runtime test
+```
+
+- [ ] **Step 3: Add the fields to `AgentProfiles.ts`**
+
+Add `model?: string` and `effort?: EffortLevel` to `AgentProfile`, importing `EffortLevel` as a type from `@anthropic-ai/claude-agent-sdk`. Set `effort: "high"` on `DEFAULT_PROFILE`.
+
+Extend `parseAgentProfile` to read both. Validate `effort` against the five legal values and **drop an invalid one rather than rejecting the profile** — this matches the existing resilience contract, where one bad field must not stop a project opening. `model` is a free-form string (the SDK accepts any model ID); accept any non-empty string and drop anything else.
+
+- [ ] **Step 4: Thread through `AgentBackendConfig` and `AgentPool`**
+
+Add the same two optional fields to `AgentBackendConfig`, and pass `profile.model` / `profile.effort` when `AgentPool.spawn()` builds the backend config.
+
+- [ ] **Step 5: Forward to `query()` in `ClaudeBackend`**
+
+Add `model` and `effort` to the options object, **omitting each key entirely when undefined** so the SDK default still applies — use the same conditional-spread pattern already used for `pathToClaudeCodeExecutable`. Do not pass `undefined` explicitly.
+
+- [ ] **Step 6: Verify**
+
+```bash
+npm -w @clautana/runtime test
+```
+
+Plus `typecheck`, `typecheck:test`, `build`, and the `any` grep.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add packages/runtime
+git commit -m "feat(runtime): make model and effort configurable per agent profile"
+```
