@@ -93,9 +93,26 @@ impl Runtime {
         self.log.log(Source::Shell, &format!("spawn: starting sidecar (attempt {attempt})"));
 
         let spawn_result = (|| -> Result<_, String> {
+            // Anchor the sidecar's working directory explicitly rather than
+            // letting it inherit whatever cwd launched desktop.exe. The
+            // packaged sidecar resolves its dynamic
+            // `import("@anthropic-ai/claude-agent-sdk")` by walking up from
+            // its own `process.cwd()` looking for `node_modules` (Task 12),
+            // and `tauri.conf.json`'s `bundle.resources` stages that
+            // package tree under the resource root - which `resource_dir()`
+            // resolves to the directory containing the running executable
+            // on Windows, matching where WiX installs the sidecar exe
+            // itself. Relying on inherited cwd instead only worked for the
+            // launchers Windows itself creates (the WiX shortcuts set
+            // `WorkingDirectory="INSTALLDIR"`) - not a Win+R launch by full
+            // path, a hand-made shortcut, or a copied/portable exe. Setting
+            // `current_dir` here removes the dependency on how the app was
+            // launched entirely.
+            let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
             app.shell()
                 .sidecar("clautana-runtime")
                 .map_err(|e| e.to_string())?
+                .current_dir(resource_dir)
                 .spawn()
                 .map_err(|e| e.to_string())
         })();
