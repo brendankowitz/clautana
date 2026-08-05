@@ -3899,11 +3899,20 @@ nothing.
    the same query. It must also return nothing — that is the Job Object guarantee,
    and it is the one that matters when the app crashes rather than exits.
 
-9. **Check the diagnostics log** (Task 18). Force a sidecar failure — e.g. point
-   `CLAUTANA_CLAUDE_EXECUTABLE` at a nonexistent path, or corrupt the sidecar
-   binary — and confirm the reason appears in the log file under the app-data
-   directory. If the app cannot explain its own failure here, Task 18 did not
-   land, regardless of what its unit tests say.
+9. **Check the diagnostics log** (Task 18). Force a sidecar failure and confirm
+   the reason appears in the log file under the app-data directory. If the app
+   cannot explain its own failure here, Task 18 did not land, regardless of what
+   its unit tests say.
+
+   > ⚠️ **Do not inject the failure via `CLAUTANA_CLAUDE_EXECUTABLE`.** Reaching
+   > `ClaudeBackend` at all requires `CLAUTANA_FAKE_BACKEND` to be unset, which is
+   > the live-money path — real API calls against whatever credentials the machine
+   > has. (An earlier draft of this step suggested exactly that; it was wrong.)
+   > Replace the resolved sidecar binary with a stub that writes to stderr and
+   > exits non-zero, keeping `CLAUTANA_FAKE_BACKEND=1` set throughout.
+
+   Run this against a **release** build launched with no stdio redirection — a
+   debug build still has a console and would mask the very bug Task 18 fixes.
 
 Record any failures and fix before continuing.
 
