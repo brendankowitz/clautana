@@ -3015,7 +3015,7 @@ console.log(`sidecar -> ${outFile}`);
 - [ ] **Step 5: Build the sidecar binary and verify it runs**
 
 ```bash
-npm -w @clautana/runtime run bundle && npm -w @clautana/runtime run package:sea
+npm -w @clautana/runtime run package:sea
 ```
 
 Expected: prints `sidecar -> ...clautana-runtime-x86_64-pc-windows-msvc.exe`.
@@ -3835,7 +3835,7 @@ Expected: `SDK loads, query present: true`. If it fails, resolve the loading pro
 - [ ] **Step 2: Build the full app**
 
 ```bash
-npm run build && npm -w @clautana/runtime run bundle && npm -w @clautana/runtime run package:sea && cd apps/desktop && npm run tauri build
+npm run build && npm -w @clautana/runtime run package:sea && cd apps/desktop && npm run tauri build
 ```
 
 Expected: an MSI under `apps/desktop/src-tauri/target/release/bundle/msi/`.
@@ -3882,8 +3882,7 @@ Three processes:
 ```bash
 npm install
 npm test
-npm -w @clautana/runtime run bundle
-npm -w @clautana/runtime run package:sea
+npm -w @clautana/runtime run package:sea   # chains bundle → tsc → esbuild → SEA
 cd apps/desktop && npm run tauri dev
 ```
 
