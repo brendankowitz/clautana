@@ -2,8 +2,15 @@ import { mkdir, readFile, appendFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isRuntimeEvent, type RuntimeEvent } from "@clautana/protocol";
 
+/**
+ * Omit that distributes over a union. A plain `Omit<RuntimeEvent, ...>` collapses
+ * to the keys common to every variant, silently discarding per-variant fields and
+ * leaving every publisher unchecked.
+ */
+type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
+
 /** An event as supplied by callers, before the log stamps identity onto it. */
-export type EventDraft = Omit<RuntimeEvent, "seq" | "runId" | "timestamp">;
+export type EventDraft = DistributiveOmit<RuntimeEvent, "seq" | "runId" | "timestamp">;
 
 /**
  * Append-only, crash-tolerant event log for a single run.

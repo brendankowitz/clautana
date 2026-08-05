@@ -12,36 +12,6 @@ export interface AgentSessionOptions {
 }
 
 /**
- * The drafts AgentSession actually produces, kept as a real discriminated
- * union so each call site is checked against its own variant's fields.
- *
- * `EventDraft` (from EventLog) is `Omit<RuntimeEvent, "seq"|"runId"|"timestamp">`,
- * but `Omit` is not distributive over a union: it collapses to the keys common
- * to every RuntimeEvent variant, which is just `type`. That flattened shape
- * can't type-check a literal like `{ type: "agent.status", agentId, status }`,
- * so drafts are built against this union instead and widened to `EventDraft`
- * only at the point they're handed to the bus.
- */
-type AgentSessionDraft =
-  | { type: "agent.status"; agentId: string; status: AgentStatus }
-  | {
-      type: "agent.output";
-      agentId: string;
-      payload: { kind: "text" | "system" | "stderr"; content: string };
-    }
-  | {
-      type: "agent.toolCall";
-      agentId: string;
-      payload: {
-        toolCallId: string;
-        name: string;
-        arguments: Record<string, unknown>;
-      };
-    }
-  | { type: "agent.result"; agentId: string; costUsd: number; tokensUsed: number }
-  | { type: "agent.error"; agentId: string; message: string };
-
-/**
  * Drives one agent's conversation against a backend, projecting everything it
  * observes onto the event bus. Holds no transport and no UI concerns, so it is
  * identical whether a window is attached or the run is scheduled and headless.
@@ -146,7 +116,7 @@ export class AgentSession {
     });
   }
 
-  private async publish(draft: AgentSessionDraft): Promise<void> {
-    await this.options.bus.publish(draft as EventDraft);
+  private async publish(draft: EventDraft): Promise<void> {
+    await this.options.bus.publish(draft);
   }
 }
