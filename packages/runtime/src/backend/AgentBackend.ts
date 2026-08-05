@@ -1,3 +1,5 @@
+import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
+
 export interface AgentBackendConfig {
   name: string;
   role?: string;
@@ -6,6 +8,8 @@ export interface AgentBackendConfig {
   systemPrompt?: string;
   allowedTools?: string[];
   mcpServers?: Record<string, unknown>;
+  model?: string;
+  effort?: EffortLevel;
 }
 
 export type BackendEvent =

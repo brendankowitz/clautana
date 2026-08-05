@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RuntimeEvent } from "@clautana/protocol";
@@ -101,6 +101,48 @@ describe("AgentPool", () => {
     });
     await pool.spawn({ projectId: "p1", config, profile: "default" });
     expect(received).toBe(dir);
+  });
+
+  it("passes a profile's model and effort through to the backend config", async () => {
+    const agentsDir = join(config.agentsDir);
+    await mkdir(agentsDir, { recursive: true });
+    await writeFile(
+      join(agentsDir, "coder.json"),
+      JSON.stringify({
+        name: "Coder",
+        role: "engineer",
+        focus: "implementation",
+        model: "claude-opus-4-8",
+        effort: "xhigh",
+      }),
+      "utf8",
+    );
+
+    let received: { model?: string; effort?: string } | undefined;
+    const pool = new AgentPool({
+      bus,
+      backendFactory: (backendConfig) => {
+        received = { model: backendConfig.model, effort: backendConfig.effort };
+        return new FakeBackend([]);
+      },
+    });
+    await pool.spawn({ projectId: "p1", config, profile: "coder" });
+
+    expect(received).toEqual({ model: "claude-opus-4-8", effort: "xhigh" });
+  });
+
+  it("leaves model and effort undefined when a profile omits them", async () => {
+    let received: { model?: string; effort?: string } | undefined;
+    const pool = new AgentPool({
+      bus,
+      backendFactory: (backendConfig) => {
+        received = { model: backendConfig.model, effort: backendConfig.effort };
+        return new FakeBackend([]);
+      },
+    });
+    await pool.spawn({ projectId: "p1", config, profile: "default" });
+
+    expect(received?.model).toBeUndefined();
   });
 
   it("killAll empties the pool", async () => {

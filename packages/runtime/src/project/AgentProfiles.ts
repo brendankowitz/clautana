@@ -1,15 +1,26 @@
+import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
+
+const EFFORT_LEVELS: readonly EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
+
+function isEffortLevel(value: unknown): value is EffortLevel {
+  return typeof value === "string" && (EFFORT_LEVELS as readonly string[]).includes(value);
+}
+
 export interface AgentProfile {
   name: string;
   role: string;
   focus: string;
   systemPrompt?: string;
   allowedTools?: string[];
+  model?: string;
+  effort?: EffortLevel;
 }
 
 export const DEFAULT_PROFILE: AgentProfile = {
   name: "Assistant",
   role: "general",
   focus: "general-purpose assistance",
+  effort: "high",
 };
 
 export function parseAgentProfile(value: unknown): AgentProfile | undefined {
@@ -29,5 +40,10 @@ export function parseAgentProfile(value: unknown): AgentProfile | undefined {
     allowedTools: Array.isArray(candidate["allowedTools"])
       ? candidate["allowedTools"].filter((t): t is string => typeof t === "string")
       : undefined,
+    model:
+      typeof candidate["model"] === "string" && candidate["model"].length > 0
+        ? candidate["model"]
+        : undefined,
+    effort: isEffortLevel(candidate["effort"]) ? candidate["effort"] : undefined,
   };
 }

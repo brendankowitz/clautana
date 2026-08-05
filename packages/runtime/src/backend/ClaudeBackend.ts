@@ -61,6 +61,8 @@ export class ClaudeBackend implements AgentBackend {
       abortController: controller,
       resume: this.sessionId,
       ...(override ? { pathToClaudeCodeExecutable: override } : {}),
+      ...(this.config.model ? { model: this.config.model } : {}),
+      ...(this.config.effort ? { effort: this.config.effort } : {}),
       stderr: (data: string) => stderrChunks.push(data),
     };
 

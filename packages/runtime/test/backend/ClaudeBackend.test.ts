@@ -60,4 +60,46 @@ describe("ClaudeBackend", () => {
       { kind: "stderr", content: "second stderr chunk" },
     ]);
   });
+
+  it("forwards model and effort to the SDK options when the profile sets them", async () => {
+    const configured: AgentBackendConfig = {
+      ...config,
+      model: "claude-opus-4-8",
+      effort: "xhigh",
+    };
+
+    let seenModel: string | undefined;
+    let seenEffort: string | undefined;
+    const stubQuery: SdkQueryFn = async function* (params) {
+      seenModel = params.options.model;
+      seenEffort = params.options.effort;
+    };
+
+    const backend = new ClaudeBackend(configured, stubQuery);
+    const controller = new AbortController();
+    for await (const _event of backend.run("do something", controller.signal)) {
+      // drain
+    }
+
+    expect(seenModel).toBe("claude-opus-4-8");
+    expect(seenEffort).toBe("xhigh");
+  });
+
+  it("omits model and effort from the SDK options entirely when the profile leaves them unset", async () => {
+    let sawModelKey = true;
+    let sawEffortKey = true;
+    const stubQuery: SdkQueryFn = async function* (params) {
+      sawModelKey = "model" in params.options;
+      sawEffortKey = "effort" in params.options;
+    };
+
+    const backend = new ClaudeBackend(config, stubQuery);
+    const controller = new AbortController();
+    for await (const _event of backend.run("do something", controller.signal)) {
+      // drain
+    }
+
+    expect(sawModelKey).toBe(false);
+    expect(sawEffortKey).toBe(false);
+  });
 });

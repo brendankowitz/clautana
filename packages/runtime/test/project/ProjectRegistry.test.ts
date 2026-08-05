@@ -95,6 +95,57 @@ describe("ProjectRegistry", () => {
     expect(profiles.has("default")).toBe(true);
   });
 
+  it("exposes effort: high on the default profile", async () => {
+    const { config } = await registry.open(root);
+    const profiles = await config.loadProfiles();
+    expect(profiles.get("default")?.effort).toBe("high");
+  });
+
+  it("round-trips model and effort from a profile JSON file", async () => {
+    const agentsDir = join(root, ".clautana", "agents");
+    await mkdir(agentsDir, { recursive: true });
+    await writeFile(
+      join(agentsDir, "coder.json"),
+      JSON.stringify({
+        name: "Coder",
+        role: "engineer",
+        focus: "implementation",
+        model: "claude-opus-4-8",
+        effort: "xhigh",
+      }),
+      "utf8",
+    );
+
+    const { config } = await registry.open(root);
+    const profiles = await config.loadProfiles();
+    const coder = profiles.get("coder");
+
+    expect(coder?.model).toBe("claude-opus-4-8");
+    expect(coder?.effort).toBe("xhigh");
+  });
+
+  it("drops an invalid effort value rather than rejecting the whole profile", async () => {
+    const agentsDir = join(root, ".clautana", "agents");
+    await mkdir(agentsDir, { recursive: true });
+    await writeFile(
+      join(agentsDir, "coder.json"),
+      JSON.stringify({
+        name: "Coder",
+        role: "engineer",
+        focus: "implementation",
+        effort: "turbo",
+      }),
+      "utf8",
+    );
+
+    const { config } = await registry.open(root);
+    const profiles = await config.loadProfiles();
+    const coder = profiles.get("coder");
+
+    expect(coder?.name).toBe("Coder");
+    expect(coder?.effort).toBeUndefined();
+  });
+
   it("ignores malformed profile files rather than failing the open", async () => {
     const agentsDir = join(root, ".clautana", "agents");
     await mkdir(agentsDir, { recursive: true });

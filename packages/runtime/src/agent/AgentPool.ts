@@ -47,6 +47,8 @@ export class AgentPool {
       workingDirectory: params.config.projectRoot,
       systemPrompt: profile.systemPrompt,
       allowedTools: profile.allowedTools,
+      model: profile.model,
+      effort: profile.effort,
     });
 
     const session = new AgentSession({
